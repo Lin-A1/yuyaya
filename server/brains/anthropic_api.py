@@ -24,12 +24,16 @@ class AnthropicBrain(Brain):
             self._client = anthropic.Anthropic(api_key=key) if key else anthropic.Anthropic()
         return self._client
 
-    def stream(self, prompt: str, history: list[dict], cancel: threading.Event) -> Iterator[str]:
+    def stream(self, prompt: str, history: list[dict], cancel: threading.Event,
+               context: str = "") -> Iterator[str]:
         c = self.conf
+        system = c.get("system", PERSONA)
+        if context:
+            system = system + "\n\n" + context
         kwargs = dict(
             model=c.get("model", "claude-opus-5-5"),
             max_tokens=c.get("max_tokens", 4096),
-            system=c.get("system", PERSONA),
+            system=system,
             messages=[*history, {"role": "user", "content": prompt}],
             output_config={"effort": c.get("effort", "low")},
         )

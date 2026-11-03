@@ -15,13 +15,18 @@ from ..protocol import PERSONA
 class OpenAICompatBrain(Brain):
     kind = "openai"
 
-    def stream(self, prompt: str, history: list[dict], cancel: threading.Event) -> Iterator[str]:
+    def stream(self, prompt: str, history: list[dict], cancel: threading.Event,
+               context: str = "") -> Iterator[str]:
         c = self.conf
         key = os.environ.get(c.get("api_key_env", ""), "") or c.get("api_key", "")
         headers = {"Content-Type": "application/json"}
         if key:
             headers["Authorization"] = f"Bearer {key}"
-        messages = [{"role": "system", "content": c.get("system", PERSONA)}, *history,
+        # 情绪和长期记忆并进 system，比塞进用户消息里更自然
+        system = c.get("system", PERSONA)
+        if context:
+            system = system + "\n\n" + context
+        messages = [{"role": "system", "content": system}, *history,
                     {"role": "user", "content": prompt}]
         body = {"model": c["model"], "messages": messages, "stream": True, **c.get("extra", {})}
         url = c.get("base_url", "https://api.deepseek.com").rstrip("/") + "/chat/completions"

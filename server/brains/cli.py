@@ -30,16 +30,18 @@ _ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07]*\x07")
 class CLIBrain(Brain):
     kind = "cli"
 
-    def build_prompt(self, prompt: str, history: list[dict]) -> str:
+    def build_prompt(self, prompt: str, history: list[dict], context: str = "") -> str:
+        # history 已由 app 层按全局 history_turns 截断，这里不再二次截断
+        hist = "".join(f"{'用户' if m['role'] == 'user' else '大肥鱼'}：{m['content']}\n" for m in history)
         if not self.conf.get("persona", True):
             return prompt
-        turns = history[-2 * self.conf.get("history_turns", 6):]
-        hist = "".join(f"{'用户' if m['role'] == 'user' else '大肥鱼'}：{m['content']}\n" for m in turns)
-        return CLI_WRAPPER.format(persona=self.conf.get("system", PERSONA), history=hist, prompt=prompt)
+        return CLI_WRAPPER.format(persona=self.conf.get("system", PERSONA), history=hist,
+                                  context=("\n" + context + "\n") if context else "", prompt=prompt)
 
-    def stream(self, prompt: str, history: list[dict], cancel: threading.Event) -> Iterator[str]:
+    def stream(self, prompt: str, history: list[dict], cancel: threading.Event,
+               context: str = "") -> Iterator[str]:
         c = self.conf
-        full = self.build_prompt(prompt, history)
+        full = self.build_prompt(prompt, history, context)
         use_stdin = c.get("stdin", True)
         outfile = None
         args = []

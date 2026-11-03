@@ -154,8 +154,9 @@ class Avatar:
             raise HTTPException(404, f"unknown brain {brain_name!r}")
         sid, cancel = self._begin()
         pub = self.hub.publish
-        # 只给大脑看的附加信息：当前情绪 + 长期记忆 + 情绪轨迹；历史里仍存用户原话
-        prompt = self.hub.mood_note() + self.session.context() + text
+        # 附加信息（当前情绪 + 长期记忆 + 情绪轨迹）单独传给大脑，不混进用户说的话
+        context = self.hub.mood_note() + self.session.context()
+        prompt = text
         pub({"type": "user", "id": sid, "text": text})
         pub({"type": "speech", "id": sid, "op": "begin", "source": brain.name})
         pub({"type": "state", "state": "thinking"})
@@ -165,7 +166,7 @@ class Avatar:
         first = None
         error = None
         try:
-            for chunk in brain.stream(prompt, self.session.messages(), cancel):
+            for chunk in brain.stream(prompt, self.session.messages(), cancel, context):
                 if cancel.is_set():
                     break
                 if first is None:

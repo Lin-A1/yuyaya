@@ -26,7 +26,8 @@ FALLBACK = [
 class DemoBrain(Brain):
     kind = "demo"
 
-    def stream(self, prompt: str, history: list[dict], cancel: threading.Event) -> Iterator[str]:
+    def stream(self, prompt: str, history: list[dict], cancel: threading.Event,
+               context: str = "") -> Iterator[str]:
         reply = next((r for keys, r in SCRIPTS if any(k in prompt for k in keys)), None)
         reply = reply or random.choice(FALLBACK)
         time.sleep(self.conf.get("think_seconds", 1.2))
