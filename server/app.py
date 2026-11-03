@@ -27,11 +27,14 @@ import pathlib
 import threading
 import time
 
-from fastapi import Body, FastAPI, HTTPException
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi import Body, FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
+from . import tts
+from .actions import ActionRunner
 from .brains import Brain, build_brain
+from .intent import is_action_request
 from .memory import Session
 from .protocol import EMOTION_CN, EMOTIONS, MOTIONS, SpeechStream, normalize_emotion, normalize_motion
 
@@ -102,9 +105,26 @@ class Avatar:
         self.ids = itertools.count(1)
         self.lock = threading.Lock()
         self.cancel: threading.Event | None = None
+        action_conf = conf.get("actions") or (conf.get("live") or {}).get("agent") or {}
+        self.actions = ActionRunner(hub, action_conf, ROOT)
 
     def brain_info(self) -> dict:
         return {"active": self.active, "brains": [b.info() for b in self.brains.values()]}
+
+    def chat_brain(self):
+        """聊天永远用"聊天型"大脑（demo / API），不用命令行智能体。"""
+        cur = self.brains.get(self.active)
+        if cur is not None and cur.info()["role"] != "agent" and cur.availability()[0]:
+            return cur
+        fallback = None
+        for b in self.brains.values():
+            if b.info()["role"] == "agent" or not b.availability()[0]:
+                continue
+            if b.conf.get("type") == "demo":
+                fallback = fallback or b
+                continue
+            return b
+        return fallback or cur or next(iter(self.brains.values()))
 
     # ---- 任务控制 ----
     def interrupt(self) -> None:
@@ -112,6 +132,7 @@ class Avatar:
             if self.cancel is not None:
                 self.cancel.set()
                 self.cancel = None
+        self.actions.stop()
         self.hub.publish({"type": "interrupt"})
 
     def _begin(self, interrupt: bool = True) -> tuple[int, threading.Event]:
@@ -149,9 +170,11 @@ class Avatar:
         return {"id": sid, "text": sp.text}
 
     def chat(self, text: str, brain_name: str | None = None) -> dict:
-        brain = self.brains.get(brain_name or self.active)
+        brain = self.brains.get(brain_name) if brain_name else self.chat_brain()
         if brain is None:
             raise HTTPException(404, f"unknown brain {brain_name!r}")
+        if brain.info()["role"] == "agent":
+            raise HTTPException(400, f"{brain.label} 是命令行智能体，不用于聊天")
         sid, cancel = self._begin()
         pub = self.hub.publish
         # 附加信息（当前情绪 + 长期记忆 + 情绪轨迹）单独传给大脑，不混进用户说的话
@@ -206,13 +229,59 @@ class Avatar:
             self.session.save()
         return {"id": sid, "brain": brain.name, "reply": reply, "interrupted": interrupted, "error": error}
 
+    def chat_or_agent(self, text: str, brain_name: str | None = None,
+                      force_action: bool = False) -> dict:
+        """Explicit desktop commands use the computer agent; normal chat stays fast."""
+        if brain_name or not (force_action or is_action_request(text)):
+            return self.chat(text, brain_name)
+        sid = next(self.ids)
+        self.hub.publish({"type": "user", "id": sid, "text": text})
+        self.hub.publish({"type": "state", "state": "thinking"})
+        result = self.actions.start(text, source="chat")
+        if result.get("accepted"):
+            ack = (result.get("ack") or "").strip()
+            if ack:
+                self.say(ack)
+            self.hub.publish({"type": "action", "state": "started", "source": "chat",
+                              "goal": text})
+            return {"id": sid, "brain": "action", "reply": ack,
+                    "interrupted": False, "error": None, "action": True, **result}
+        reason = result.get("reason") or "unknown"
+        reply = "我还在忙上一件事，等我做完再说。" if reason == "busy" else \
+            "我的电脑操作功能还没开启。"
+        self.say(reply)
+        self.hub.publish({"type": "action", "state": "rejected", "source": "chat",
+                          "reason": reason, "goal": text})
+        return {"id": sid, "brain": "action", "reply": reply,
+                "interrupted": False, "error": None if reason == "busy" else reason,
+                "action": False, **result}
+
 
 def create_app() -> FastAPI:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     conf = load_config()
     hub = Hub()
     avatar = Avatar(hub, conf)
+    voice_conf = conf.get("voice") or {}
+    tts_conf = voice_conf.get("tts") or {}
+    security_conf = conf.get("security") or {}
     app = FastAPI(title="大肥鱼数字人")
+
+    def require_local_control(request: Request) -> None:
+        if security_conf.get("allow_remote_actions"):
+            return
+        host = request.client.host if request.client else ""
+        if host and host not in ("127.0.0.1", "::1", "localhost", "testclient", "testserver"):
+            raise HTTPException(403, "电脑操作接口默认只允许本机调用")
+
+    @app.middleware("http")
+    async def _no_cache_static(request, call_next):
+        """改前端后普通刷新就能生效：不缓存页面和 js/css（仍然走 ETag 协商）。"""
+        resp = await call_next(request)
+        p = request.url.path
+        if p == "/" or p.startswith("/js/") or p.startswith("/css/"):
+            resp.headers["Cache-Control"] = "no-cache"
+        return resp
     app.state.avatar = avatar
 
     @app.on_event("startup")
@@ -242,13 +311,18 @@ def create_app() -> FastAPI:
                                  headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
     @app.post("/api/chat")
-    async def chat(body: dict = Body(...)):
+    async def chat(request: Request, body: dict = Body(...)):
         text = (body.get("text") or "").strip()
         if not text:
             raise HTTPException(400, "text is required")
+        force_action = bool(body.get("action", False))
+        if force_action or is_action_request(text):
+            require_local_control(request)
         if body.get("wait", True):
-            return await asyncio.to_thread(avatar.chat, text, body.get("brain"))
-        threading.Thread(target=avatar.chat, args=(text, body.get("brain")), daemon=True).start()
+            return await asyncio.to_thread(avatar.chat_or_agent, text,
+                                           body.get("brain"), force_action)
+        threading.Thread(target=avatar.chat_or_agent,
+                         args=(text, body.get("brain"), force_action), daemon=True).start()
         return {"ok": True}
 
     @app.post("/api/say")
@@ -290,6 +364,48 @@ def create_app() -> FastAPI:
         avatar.interrupt()
         return {"ok": True}
 
+    @app.get("/api/action/status")
+    async def action_status():
+        return avatar.actions.status()
+
+    @app.post("/api/action/stop")
+    async def action_stop(request: Request):
+        require_local_control(request)
+        return avatar.actions.stop()
+
+    @app.get("/api/voice/config")
+    async def voice_config():
+        return {
+            "tts": {
+                "enabled": bool(tts_conf.get("enabled", True)) and tts.available(),
+                "provider": "sapi" if tts.available() else "",
+                "voice": tts_conf.get("voice") or "Microsoft Huihui Desktop",
+                "rate": int(tts_conf.get("rate", 0)),
+                "volume": int(tts_conf.get("volume", 100)),
+            },
+            "asr": {"provider": "browser", "continuous": True, "barge_in": True},
+            "realtime": {"enabled": False},
+        }
+
+    @app.post("/api/tts")
+    async def say_tts(body: dict = Body(...)):
+        text = (body.get("text") or "").strip()
+        if not text:
+            raise HTTPException(400, "text is required")
+        if len(text) > 600:
+            text = text[:600]
+        try:
+            wav = await asyncio.to_thread(
+                tts.synth_wav, text,
+                body.get("voice") or tts_conf.get("voice") or "",
+                int(body.get("rate", tts_conf.get("rate", 0))),
+                int(body.get("volume", tts_conf.get("volume", 100))),
+            )
+        except Exception as e:
+            raise HTTPException(503, f"TTS 不可用：{e}")
+        return Response(content=wav, media_type="audio/wav",
+                        headers={"Cache-Control": "no-store"})
+
     @app.get("/api/memory")
     async def memory():
         """看她记得什么。"""
@@ -330,6 +446,11 @@ def create_app() -> FastAPI:
         name = body.get("name")
         if name not in avatar.brains:
             raise HTTPException(404, f"unknown brain {name!r}")
+        ok, why = avatar.brains[name].availability()
+        if not ok:
+            raise HTTPException(400, f"大脑 {name} 现在不可用：{why}")
+        if avatar.brains[name].info()["role"] == "agent":
+            raise HTTPException(400, f"{name} 是命令行智能体，不参与聊天")
         avatar.active = name
         hub.publish({"type": "brain", **avatar.brain_info()})
         return avatar.brain_info()

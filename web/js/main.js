@@ -29,11 +29,63 @@ async function main() {
   layout(manifest);
   new ResizeObserver(() => layout(manifest)).observe($("#feed"));
 
-  const voice = params.get("tts") === "browser" && "speechSynthesis" in window ? new BrowserVoice(avatar) : null;
+  const voice = await createVoice(avatar, params);
   const player = new SpeechPlayer({ avatar, subtitle: $("#subtitle"), voice });
   const hud = new Hud(avatar);
   connect({ avatar, player, hud });
-  setupConsole({ avatar });
+  const voiceChat = setupVoice({ avatar, player });
+  setupConsole({ avatar, player, voiceChat });
+}
+
+async function createVoice(avatar, params) {
+  const mode = (params.get("tts") || "auto").toLowerCase();
+  if (mode === "none" || mode === "off") return null;
+  const browser = "speechSynthesis" in window ? new BrowserVoice(avatar) : null;
+  if (mode === "browser") return browser;
+  try {
+    const cfg = await fetch("/api/voice/config").then((r) => r.json());
+    if (cfg.tts?.enabled) return new ServerVoice(avatar, cfg.tts);
+  } catch (e) {
+    console.warn("[tts]", e.message);
+  }
+  return browser;
+}
+
+function setupVoice({ avatar, player }) {
+  const btn = $("#mic-btn");
+  if (!btn) return null;
+  const labels = { off: "语音", listening: "聆听中", speech: "在听", heard: "处理中", denied: "无权限" };
+  const session = new VoiceSession({
+    onText: (text) => {
+      api("/api/interrupt", {});
+      player.interrupt();
+      avatar.setState("idle");
+      showUserLine(text);
+      api("/api/chat", { text, wait: false, voice: true });
+    },
+    onState: (state) => {
+      const on = state === "listening" || state === "speech" || state === "heard";
+      btn.textContent = labels[state] || "语音";
+      btn.setAttribute("aria-pressed", String(on));
+      btn.dataset.state = state;
+    },
+  });
+  if (!session.supported) {
+    btn.disabled = true;
+    btn.title = "当前浏览器不支持语音识别";
+    return session;
+  }
+  btn.addEventListener("click", async () => {
+    try {
+      if (session.active) session.stop();
+      else await session.start();
+    } catch (e) {
+      btn.title = e.message;
+      btn.dataset.state = "denied";
+    }
+  });
+  addEventListener("beforeunload", () => session.stop());
+  return session;
 }
 
 /** 让立绘"坐"在桌子后面：立绘下沿藏到桌面上沿以下一点点。 */
@@ -103,6 +155,15 @@ function connect({ avatar, player, hud }) {
         player.interrupt();
         avatar.setState("idle");
         break;
+      case "action_log":
+        console.log("[action]", e.text);
+        break;
+      case "action":
+        if (e.state === "started") $("#hud-state").textContent = "ACTION";
+        if (e.state === "finished" || e.state === "failed" || e.state === "timeout") {
+          $("#hud-state").textContent = "IDLE";
+        }
+        break;
       case "stats":
         if (e.first_token !== undefined) hud.set("latency", e.first_token.toFixed(2) + "s");
         if (e.total !== undefined) hud.turn();
@@ -157,12 +218,18 @@ class Hud {
   turn() { this.set("turns", String(++this.turns)); }
   brains(info) {
     this.brainList = info.brains;
-    const b = info.brains.find((x) => x.name === info.active) || {};
+    const chatBrains = info.brains.filter((x) => x.role !== "agent" && x.available !== false);
+    const b = chatBrains.find((x) => x.name === info.active) || chatBrains[0] || {};
     this.set("brain", (b.label || info.active || "—").toUpperCase());
     this.set("model", b.model || "—");
     const sel = $("#brain-select");
-    sel.innerHTML = info.brains.map((x) => `<option value="${x.name}">${x.label}</option>`).join("");
-    sel.value = info.active;
+    sel.innerHTML = chatBrains.length
+      ? chatBrains.map((x) => `<option value="${x.name}">${x.label}</option>`).join("")
+      : '<option value="" disabled>暂无可用聊天模型</option>';
+    sel.value = b.name || "";
+    sel.hidden = chatBrains.length <= 1;
+    sel.disabled = chatBrains.length <= 1;
+    sel.title = chatBrains.length > 1 ? "切换聊天大脑" : "当前只有一个聊天模型";
   }
   tick() {
     const sec = Math.floor((Date.now() - this.t0) / 1000);
@@ -173,14 +240,14 @@ class Hud {
 }
 
 // ---------------- 控制台 ----------------
-function setupConsole() {
+function setupConsole({ voiceChat = null } = {}) {
   const form = $("#console"), input = $("#input"), sel = $("#brain-select");
   form.addEventListener("submit", (ev) => {
     ev.preventDefault();
     const text = input.value.trim();
     if (!text) return;
     input.value = "";
-    api("/api/chat", { text, wait: false });
+    api("/api/chat", { text, wait: false, voice: false });
   });
   sel.addEventListener("change", () => api("/api/brain", { name: sel.value }));
 

@@ -94,7 +94,8 @@ TOOLS = [
 ]
 
 ROUTES = {"yaya_say": "/api/say", "yaya_emotion": "/api/emotion", "yaya_motion": "/api/motion",
-           "yaya_state": "/api/state", "yaya_remember": "/api/memory"}
+           "yaya_state": "/api/state", "yaya_remember": "/api/memory",
+           "yaya_forget": "/api/memory"}
 METHODS = {"yaya_forget": "DELETE"}
 
 

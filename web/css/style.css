@@ -172,8 +172,27 @@ body {
 }
 #console input { flex: 1; min-width: 0; }
 #console input:focus { border-color: rgba(168, 240, 198, .6); }
-#console select { max-width: 160px; }
+#console select { max-width: 220px; }
+/* 原生下拉的弹层是白底，选项要显式给深色字，否则深色主题里看着像"全灰掉" */
+#console select option { color: #16191a; background: #fff; }
+#console select option:disabled { color: #9aa3a0; }
 #console button { cursor: pointer; background: rgba(168, 240, 198, .16); }
 #console button:hover { background: rgba(168, 240, 198, .28); }
+#console #mic-btn { min-width: 48px; }
+#console #mic-btn[aria-pressed="true"] {
+  color: #101513; background: #7fe1b2; border-color: #a8f0c6;
+  box-shadow: 0 0 0 3px rgba(127, 225, 178, .16);
+}
+@media (max-width: 620px) {
+  #console {
+    width: 94vw; display: grid; grid-template-columns: minmax(0, 1fr) auto auto;
+    gap: 6px;
+  }
+  #console select { grid-column: 1 / -1; max-width: none; width: 100%; }
+  #console input { grid-column: 1; }
+  #console #mic-btn { grid-column: 2; }
+  #console button[type="submit"] { grid-column: 3; }
+  #console input, #console select, #console button { min-height: 44px; }
+}
 body.obs #console { display: none; }
 body.obs { background: transparent; }

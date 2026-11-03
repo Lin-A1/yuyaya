@@ -47,5 +47,27 @@
       "stdin": true,
       "timeout": 300
     }
+  },
+
+  "actions": {
+    "enabled": true,
+    "cmd": ["codex", "exec", "--skip-git-repo-check", "-"],
+    "cwd": "",
+    "ack": "好，我去弄一下！",
+    "timeout": 180
+  },
+
+  "security": {
+    "allow_remote_actions": false
+  },
+
+  "voice": {
+    "tts": {
+      "enabled": true,
+      "provider": "sapi",
+      "voice": "Microsoft Huihui Desktop",
+      "rate": 0,
+      "volume": 100
+    }
   }
 }

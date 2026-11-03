@@ -9,7 +9,7 @@
 
 - **实时形象**：立绘被切成网格实时形变，头部转动、呼吸、头发/呆毛/耳朵的惯性摆动全部在浏览器里算，不需要 GPU。
 - **情绪惯性**：新情绪不会一来就翻脸，而是沿路线一步步走过去（哭 → 抽鼻子平复 → 害羞 → 笑）。
-- **口型与字幕**：逐句电影字幕，嘴型跟着每个音节开合；接口留好了，随时能接 TTS / ASR。
+- **语音与字幕**：逐句电影字幕，本机中文 TTS 默认配音，真实音频响度驱动口型；浏览器连续语音输入支持插话。
 - **可插拔大脑**：OpenAI 兼容接口（DeepSeek / 通义 / Kimi / Ollama…）、Claude API、任意命令行 agent，离线 demo 开箱即用。
 - **外部可驱动**：HTTP API + 命令行 + MCP 三套入口，Claude Code、Codex 这类 agent 可以直接把她当"嘴巴"用。
 - **OBS 友好**：`?obs=1` 就是一块干净的视频源。
@@ -22,7 +22,7 @@
 - [让 agent 把她当"嘴巴"（MCP）](#让-agent-把她当嘴巴mcp)
 - [形象是怎么动起来的](#形象是怎么动起来的)
 - [可选：THA3 神经网络渲染](#可选tha3-神经网络渲染)
-- [接 TTS / ASR / 全双工](#接-tts--asr--全双工)
+- [语音对话](#语音对话)
 - [素材](#素材)
 - [目录结构](#目录结构)
 
@@ -34,6 +34,7 @@ python -m server                 # http://127.0.0.1:8848
 ```
 
 打开 http://127.0.0.1:8848 ，底部输入框聊天。默认大脑是离线 demo，不用任何 key。
+Windows 如果装了多个 Python，用实际装过 `requirements.txt` 的解释器启动，例如 `py -3.9 -m server`。
 
 ```bash
 cp config.example.json config.json   # 编辑后重启服务；key 只写环境变量名，不写明文
@@ -59,6 +60,78 @@ set DEEPSEEK_API_KEY=sk-...          # PowerShell: $env:DEEPSEEK_API_KEY="sk-...
 ```
 
 ## 大脑配置（config.json）
+
+`config.example.json` 里预置了 6 个大脑，**开箱能用的只有「演示（离线）」**，其余都要先准备 key 或装命令：
+
+| config 里的名字 | type | 开箱可用？ | 需要什么 |
+|---|---|---|---|
+| `demo` 演示（离线） | `demo` | ✅ 直接可用 | 不用任何东西，台词是写死的 |
+| `deepseek` DeepSeek | `openai` | ⚠ 要 key | 环境变量 `DEEPSEEK_API_KEY` |
+| `qwen` 通义千问 | `openai` | ⚠ 要 key | 环境变量 `DASHSCOPE_API_KEY` |
+| `ollama` Ollama 本地 | `openai` | ⚠ 要服务 | 本机跑着 `ollama serve`，且 `ollama pull qwen2.5:7b` |
+| `claude` Claude API | `anthropic` | ⚠ 要 key + 包 | `pip install anthropic` + `ANTHROPIC_API_KEY` |
+| `claude-code` Claude Code CLI | `cli` | ⚠ 要装命令 | `claude` 在 PATH 里且已登录 |
+| `codex` Codex CLI | `cli` | ⚠ 要装命令 | `codex` 在 PATH 里且已登录 |
+
+聊天下拉框只显示**当前可用的聊天大脑**，没配 key、服务没开或还在启动命令行智能体都不会混进来；只剩一个可用项时下拉框自动隐藏。`GET /api/brains` 仍会返回全部大脑的 `available` / `reason` / `role`，脚本可以自己判断配置缺什么。
+
+> key 只写环境变量名，**别把明文写进 `config.json`**（那文件可能进仓库）。Windows PowerShell：`$env:DEEPSEEK_API_KEY="sk-..."`；临时验证可以用 `set DEEPSEEK_API_KEY=sk-...` 后在同一窗口启动服务。
+
+### 聊天用 API，干活用 CLI
+
+下拉框里其实混着两类东西，别拿错：
+
+| 类别 | 大脑 | 出字速度 | 适合 |
+|---|---|---|---|
+| **聊天（API）** | `demo` `deepseek` `qwen` `ollama` `claude` | 1~2 秒 | 一问一答、调节奏 |
+| **干活（CLI 代理）** | `claude-code` `codex` | 起一次进程：`claude -p` 约 7 秒，`codex exec` 约 45 秒 | 需要真的动手：操作电脑、读文件、调工具 |
+
+**一问一答永远不经过 CLI 智能体**：下拉框里 CLI 选项是禁用的，`/api/brain` 也拒绝直接切换，普通聊天固定走最快可用的 API 大脑。
+
+CLI 大脑每次回复都要重开一个 agent 进程，聊起来又慢又贵。main 分支现在只在明确动作句上调用顶层 `actions.cmd`：例如“打开记事本”“帮我点一下开始”“操作这个游戏”；“怎么打开任务管理器”“我刚刚打开了游戏”仍走普通聊天。动作任务可查看、可停止，`Esc` 会杀掉进程树。
+
+电脑操作接口默认只允许本机调用；确实需要远程控制时显式设置 `security.allow_remote_actions: true`。
+
+### 逐个启用
+
+```bash
+# 1) DeepSeek（推荐，便宜、中文好）
+set DEEPSEEK_API_KEY=sk-...
+python -m server
+
+# 2) 通义千问
+set DASHSCOPE_API_KEY=sk-...
+
+# 3) Ollama 本地（不用 key）
+ollama serve
+ollama pull qwen2.5:7b
+python -m server
+
+# 4) Claude API
+pip install anthropic
+set ANTHROPIC_API_KEY=sk-ant-...
+python -m server
+
+# 5) 任意命令行 agent（Claude Code / Codex / 自己写的）
+#    确认命令能跑：claude -p "hi" / codex exec "hi"
+python -m server
+```
+
+启用后在下拉框里切过去（或 `POST /api/brain {"name":"deepseek"}`、`python tools/yaya.py brain deepseek`）。
+
+### 想加别的模型
+
+`openai` 类型能吃任何 OpenAI 兼容接口（Kimi、智谱、硅基流动、vLLM、LM Studio…），在 `config.json` 的 `brains` 里加一项就行：
+
+```json
+"kimi": {
+  "type": "openai",
+  "label": "Kimi",
+  "base_url": "https://api.moonshot.cn/v1",
+  "model": "moonshot-v1-8k",
+  "api_key_env": "MOONSHOT_API_KEY"
+}
+```
 
 | type | 说明 | 关键字段 |
 |---|---|---|
@@ -111,18 +184,23 @@ yaya_remember {"text": "..."}  /  yaya_forget {"text": "..."}
 
 | 接口 | 作用 |
 |---|---|
-| `POST /api/chat {"text", "brain"?, "wait"?}` | 交给大脑回复；新的 chat 会打断正在说的话 |
+| `POST /api/chat {"text", "brain"?, "wait"?, "action"?}` | 普通问答交给聊天大脑；明确动作句转到 Codex |
 | `POST /api/say {"text", "emotion"?, "interrupt"?}` | 直接说话，不经过大脑；默认排队播放 |
 | `POST /api/emotion {"name", "hold"?, "instant"?}` | 切情绪，默认一直保留并按惯性逐步过渡；`instant: true` 立即切换；`hold` 为秒数时表示临时表情（立即生效），结束恢复之前的情绪 |
 | `POST /api/motion {"name"}` | 做动作：`nod` `shake` `hop` `jump` `droop` `tremble` `tilt` `wiggle` `sniff` `sigh` |
 | `POST /api/state {"state"}` | `idle` / `listening` / `thinking` / `speaking` |
 | `POST /api/mouth {"level"}` 或 `{"levels", "fps"}` | 外部口型驱动（给 TTS 用），会覆盖内置的随机开合 |
 | `POST /api/interrupt` | 打断（全双工插话用） |
+| `GET /api/action/status` · `POST /api/action/stop` | 查看 / 停止 Codex 动作任务 |
+| `GET /api/voice/config` | 查询 TTS 和语音输入能力 |
+| `POST /api/tts {"text","voice"?,"rate"?,"volume"?}` | 本机中文 TTS，返回 WAV |
 | `GET /api/memory` | 看她记得什么（长期记忆点 + 对话轮数） |
 | `POST /api/memory {"text"}` | 替她记住一件事 |
 | `DELETE /api/memory {"text"?}` | 忘掉一件事；不带 text 就全忘 |
 | `POST /api/reset` · `GET /api/brains` · `POST /api/brain {"name"}` | 清历史 / 查看 / 切换大脑 |
 | `GET /api/events` | SSE 事件流（前端订阅；也可以自己写别的前端） |
+
+不启服务也能自检动作分流、本机 TTS 和接口：`py -3.9 tools/selftest.py`。
 
 命令行：`python tools/yaya.py chat "你好"`、`yaya.py say "[happy][hop]搞定啦"`、`yaya.py emotion sad`、`yaya.py motion nod`……
 
@@ -198,13 +276,11 @@ RTX 3060 实测（PyTorch 2.3.1 + CUDA 12.1）：
 > **建议：日常用 WebGL，THA3 用于体验更自然的头部转动。**
 > WebGL 原图更清晰、带发丝/呆毛/耳朵惯性、无 GPU 依赖；THA3 的头颈运动更自然，但画面略软且需要常驻 GPU 进程。
 
-## 接 TTS / ASR / 全双工
+## 语音对话
 
-接口已经预留好了，不需要改动形象层。
-
-- **TTS**：前端 `SpeechPlayer` 接受 `voice = { speak(text): Promise, cancel() }`，每句话交给 voice 朗读，字幕和语音同步推进。在 `speak()` 里用 WebAudio `AnalyserNode` 取响度调 `avatar.setMouthLevel(x)`（0~1，自动量化成 4 级口型）就是真口型。参考 `web/js/speech.js` 里的 `BrowserVoice`。服务端 TTS 也可以直接 `POST /api/mouth {"levels": [...], "fps": 60}`。
-- **ASR**：识别开始 `POST /api/state {"state":"listening"}`（她会轻微摇晃、HUD 显示 LISTENING），识别完 `POST /api/chat`。
-- **全双工 / 插话**：检测到用户开口就 `POST /api/interrupt`。服务端会取消大脑请求、杀掉 CLI 子进程，前端立即停止字幕和口型。
+- **TTS**：前端默认调用 `/api/tts`，服务端用 Windows SAPI 生成 WAV；`ServerVoice` 通过 WebAudio `AnalyserNode` 取真实响度驱动口型，失败时回退浏览器语音。`?tts=off` 关闭，`?tts=browser` 强制浏览器语音。
+- **连续语音输入**：控制台“语音”按钮启用浏览器 `SpeechRecognition`，持续监听中文语音。识别到用户说话会打断当前 TTS 和大脑请求，再自动发送 `/api/chat`；普通问答仍只走聊天模型。
+- **实时模型边界**：当前默认是本机 TTS + 浏览器 ASR 的连续语音回路，不依赖外部 key；后续接 Realtime/WebRTC 时替换 `web/js/voice.js` 的输入输出层即可，动作分流和字幕协议无需改。
 
 ## 素材
 
@@ -233,10 +309,11 @@ python tools/build_assets.py           # 抠像、对齐、切贴片、检测屏
 
 ```
 server/            FastAPI 服务：app.py（总线/会话/API）、protocol.py（标签/人设/清洗）、memory.py（上下文+长期记忆）、
-                   brains/（适配器）
+                   brains/（适配器）、intent.py（动作意图分流）、actions.py（命令行智能体执行器）、tts.py（本机语音合成）
 web/               前端：index.html、css/style.css、js/rig.js（网格骨骼/弹簧/动作）、js/avatar.js（WebGL 形象）、
-                   js/remote.js（可选 THA3 渲染）、js/speech.js（字幕与语音）、js/main.js
-tools/             yaya.py（命令行控制）、mcp_server.py（MCP）、gen_sprites.py、build_assets.py、tha3_bridge.py（可选 THA3 渲染）
+                   js/remote.js（可选 THA3 渲染）、js/speech.js（字幕与语音）、js/voice.js（TTS 播放 + 连续语音输入）、js/main.js
+tools/             yaya.py（命令行控制）、mcp_server.py（MCP）、game.py + game_control/（操作桌面）、
+                   selftest.py（自检）、gen_sprites.py、build_assets.py、tha3_bridge.py（可选 THA3 渲染）
 docs/              README 截图
 state/             会话记忆文件（不入库）
 config.example.json
