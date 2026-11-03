@@ -62,6 +62,26 @@ TOOLS = [
         },
     },
     {
+        "name": "yaya_remember",
+        "description": "让数字人记住一件事（长期记忆，重启后还在）。适合记下用户的喜好、约定、称呼。"
+                       "同一件事不要重复记；要忘掉用 yaya_forget。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"text": {"type": "string", "description": "要记住的事，一句话"}},
+            "required": ["text"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "yaya_forget",
+        "description": "让数字人忘掉一件事。不给 text 就全部忘掉。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"text": {"type": "string", "description": "要忘掉的事；不给就全忘"}},
+            "additionalProperties": False,
+        },
+    },
+    {
         "name": "yaya_state",
         "description": "设置数字人的状态：idle 空闲 / thinking 思考中 / listening 倾听中 / speaking 说话中。",
         "inputSchema": {
@@ -73,12 +93,15 @@ TOOLS = [
     },
 ]
 
-ROUTES = {"yaya_say": "/api/say", "yaya_emotion": "/api/emotion", "yaya_motion": "/api/motion", "yaya_state": "/api/state"}
+ROUTES = {"yaya_say": "/api/say", "yaya_emotion": "/api/emotion", "yaya_motion": "/api/motion",
+           "yaya_state": "/api/state", "yaya_remember": "/api/memory"}
+METHODS = {"yaya_forget": "DELETE"}
 
 
-def post(path, body):
-    req = urllib.request.Request(URL + path, data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
-                                 headers={"Content-Type": "application/json; charset=utf-8"}, method="POST")
+def post(path, body, method="POST"):
+    data = json.dumps(body, ensure_ascii=False).encode("utf-8") if body is not None else None
+    req = urllib.request.Request(URL + path, data=data,
+                                 headers={"Content-Type": "application/json; charset=utf-8"}, method=method)
     with urllib.request.urlopen(req, timeout=10) as r:
         return json.loads(r.read().decode("utf-8"))
 
@@ -97,7 +120,7 @@ def handle(msg):
         if name not in ROUTES:
             raise ValueError(f"unknown tool {name}")
         try:
-            result = post(ROUTES[name], args)
+            result = post(ROUTES[name], args or None, METHODS.get(name, "POST"))
             return {"content": [{"type": "text", "text": json.dumps(result, ensure_ascii=False)}]}
         except Exception as e:  # 数字人没开不应该让 agent 的主任务失败
             return {"content": [{"type": "text", "text": f"数字人服务不可用（{URL}）：{e}"}], "isError": True}

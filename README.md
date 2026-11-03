@@ -81,6 +81,32 @@ set DEEPSEEK_API_KEY=sk-...          # PowerShell: $env:DEEPSEEK_API_KEY="sk-...
 
 也认中文别名（`[点头]` `[歪头]` `[抽鼻子]` `[叹气]`……）。markdown、代码块会被清洗掉，不会出现在字幕里。
 
+## 记忆
+
+两层记忆，都会**落盘**（`state/memory.json`），重启服务还在。
+
+**短期上下文**——最近 `history_turns` 轮对话（默认 12 轮），每轮都带进下一次请求。助手那侧会带上当时的情绪标签（`[happy]你好`），所以她知道自己刚才什么状态。`POST /api/reset` 清空。
+
+**长期记忆点**——"爸爸讨厌香菜"这种具体的事，她会一直记着。三种写法：
+
+```bash
+# 1. 大脑自己记：在回复里插标签，内容不会出现在字幕里
+[happy]好的！[记住:爸爸讨厌香菜]我记住了。
+
+# 2. 外部接口 / 命令行
+curl -XPOST localhost:8848/api/memory -d '{"text":"爸爸喜欢喝奶茶"}'
+python tools/yaya.py remember "约定：每天要问候爸爸"
+python tools/yaya.py memory          # 看看她记得什么
+python tools/yaya.py forget "爸爸喜欢喝奶茶"    # 忘掉一件；不带参数就全忘
+
+# 3. agent 用 MCP 工具
+yaya_remember {"text": "..."}  /  yaya_forget {"text": "..."}
+```
+
+记住的事会写进发给大脑的系统提示（"你记得这些事：…"），加上当前情绪和最近的情绪轨迹，所以她会顺着已有记忆说话。前端 HUD 的 MEMORY CAPSULE 显示 `FACTS` 条数，记住的瞬间字幕上方会飘一行"记住：xxx"。
+
+同一个 session（同一份 `state/memory.json`）共享记忆；要给不同的人用，设 `YUYAYA_STATE` 指到不同文件即可。
+
 ## 控制接口
 
 | 接口 | 作用 |
@@ -92,6 +118,9 @@ set DEEPSEEK_API_KEY=sk-...          # PowerShell: $env:DEEPSEEK_API_KEY="sk-...
 | `POST /api/state {"state"}` | `idle` / `listening` / `thinking` / `speaking` |
 | `POST /api/mouth {"level"}` 或 `{"levels", "fps"}` | 外部口型驱动（给 TTS 用），会覆盖内置的随机开合 |
 | `POST /api/interrupt` | 打断（全双工插话用） |
+| `GET /api/memory` | 看她记得什么（长期记忆点 + 对话轮数） |
+| `POST /api/memory {"text"}` | 替她记住一件事 |
+| `DELETE /api/memory {"text"?}` | 忘掉一件事；不带 text 就全忘 |
 | `POST /api/reset` · `GET /api/brains` · `POST /api/brain {"name"}` | 清历史 / 查看 / 切换大脑 |
 | `GET /api/events` | SSE 事件流（前端订阅；也可以自己写别的前端） |
 
@@ -103,7 +132,7 @@ set DEEPSEEK_API_KEY=sk-...          # PowerShell: $env:DEEPSEEK_API_KEY="sk-...
 claude mcp add yuyaya -- python /path/to/yuyaya/tools/mcp_server.py
 ```
 
-提供 `yaya_say` / `yaya_emotion` / `yaya_motion` / `yaya_state` 四个工具。agent 干活时可以让大肥鱼播报进度、用表情表达状态。
+提供 `yaya_say` / `yaya_emotion` / `yaya_motion` / `yaya_state` / `yaya_remember` / `yaya_forget` 六个工具。agent 干活时可以让大肥鱼播报进度、用表情表达状态，也可以让她记住用户交代的事。
 
 ## 形象是怎么动起来的
 
@@ -203,10 +232,12 @@ python tools/build_assets.py           # 抠像、对齐、切贴片、检测屏
 ## 目录结构
 
 ```
-server/            FastAPI 服务：app.py（总线/会话/API）、protocol.py（标签/人设/清洗）、brains/（适配器）
+server/            FastAPI 服务：app.py（总线/会话/API）、protocol.py（标签/人设/清洗）、memory.py（上下文+长期记忆）、
+                   brains/（适配器）
 web/               前端：index.html、css/style.css、js/rig.js（网格骨骼/弹簧/动作）、js/avatar.js（WebGL 形象）、
                    js/remote.js（可选 THA3 渲染）、js/speech.js（字幕与语音）、js/main.js
 tools/             yaya.py（命令行控制）、mcp_server.py（MCP）、gen_sprites.py、build_assets.py、tha3_bridge.py（可选 THA3 渲染）
 docs/              README 截图
+state/             会话记忆文件（不入库）
 config.example.json
 ```

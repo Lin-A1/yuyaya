@@ -69,6 +69,7 @@ function connect({ avatar, player, hud }) {
         avatar.setEmotion(e.emotion, { react: false, instant: true });
         avatar.setState(e.state === "listening" ? "listening" : "idle");
         hud.brains(e);
+        hud.set("facts", String(e.facts || 0));   // 刷新后恢复记忆条数
         break;
       case "brain":
         hud.brains(e);
@@ -87,6 +88,9 @@ function connect({ avatar, player, hud }) {
         break;
       case "emotion":
         avatar.setEmotion(e.name, { hold: e.hold || 0, instant: !!e.instant });
+        break;
+      case "memory":
+        hud.remember(e.text);
         break;
       case "motion":
         avatar.motion(e.name);
@@ -139,6 +143,17 @@ class Hud {
     setInterval(() => this.tick(), 250);
   }
   set(key, val) { const el = $("#hud-" + key); if (el && el.textContent !== val) el.textContent = val; }
+  /** 记住了一件事：HUD 计数 +1，字幕上方飘一行提示 */
+  remember(text) {
+    this.facts = (this.facts || 0) + 1;
+    this.set("facts", String(this.facts));
+    const el = $("#memory-note");
+    if (!el) return;
+    el.textContent = "记住：" + text;
+    el.classList.add("on");
+    clearTimeout(this._noteTimer);
+    this._noteTimer = setTimeout(() => el.classList.remove("on"), 3200);
+  }
   turn() { this.set("turns", String(++this.turns)); }
   brains(info) {
     this.brainList = info.brains;

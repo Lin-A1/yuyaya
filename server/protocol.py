@@ -62,6 +62,8 @@ PERSONA = """你是"大肥鱼"，一个住在旧电脑屏幕里的Q版数字人�
 4. 偶尔可以插入动作标签，可选：[nod]点头 [shake]摇头 [hop]蹦一下 [jump]跳起来 [droop]垂头丧气 [tremble]发抖 [tilt]歪头 [wiggle]扭一扭 [sniff]抽鼻子 [sigh]叹气
    例如：[happy][hop]好耶！[thinking][tilt]让我想想……
 5. 标签只用来控制表情和动作，不要解释标签。
+6. 如果爸爸告诉你一件值得长期记住的事（喜好、约定、称呼、承诺），用 [记住:内容] 记下来，例如 [记住:爸爸讨厌香菜]。
+   这件事之后会一直在你的记忆里。同一件事不要重复记。
 6. 情绪有惯性。消息开头如果写了你此刻的情绪，要从那个情绪自然过渡，不要第一句就跳到相反的情绪。
    例如刚哭过被哄时：[sad]呜……真的吗？[neutral][sniff]那、那好吧。[shy]我不哭了。"""
 
@@ -73,6 +75,8 @@ CLI_WRAPPER = """{persona}
 
 
 _TAG_RE = re.compile(r"\[\s*(?:emo(?:tion)?\s*[:：=]\s*)?([A-Za-z_一-鿿]{1,16})\s*\]")
+# 记忆标签：[记住:爸爸喜欢喝奶茶] —— 内容不进字幕，只写进长期记忆
+_MEM_RE = re.compile(r"\[\s*(?:记住|记忆|remember)\s*[:：]\s*([^\]]{1,120}?)\s*\]")
 _MD_LINE_RE = re.compile(r"^\s{0,3}(?:#{1,6}\s+|[-*+]\s+|\d+[.)]\s+|>\s?)")
 _MD_INLINE_RE = re.compile(r"(\*\*|__|`|~~)")
 _LINK_RE = re.compile(r"!?\[([^\]]*)\]\([^)]*\)")
@@ -134,7 +138,17 @@ class SpeechStream:
         line = _MD_INLINE_RE.sub("", line)
         events: list[dict] = []
         pos = 0
-        for m in _TAG_RE.finditer(line):
+        # 记忆标签和情绪/动作标签按出现顺序一起扫，记忆事件留在它该在的位置
+        tags = sorted(
+            [m for m in _MEM_RE.finditer(line)] + [m for m in _TAG_RE.finditer(line)],
+            key=lambda m: m.start(),
+        )
+        for m in tags:
+            if m.re is _MEM_RE:
+                events.append(self._text(line[pos:m.start()]))
+                events.append({"op": "memory", "text": m.group(1).strip()})
+                pos = m.end()
+                continue
             emo, motion = normalize_emotion(m.group(1)), normalize_motion(m.group(1))
             if emo is None and motion is None:
                 continue  # 不认识的方括号内容当普通文字

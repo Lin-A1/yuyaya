@@ -17,9 +17,10 @@ import argparse, json, os, sys, urllib.request
 URL = os.environ.get("YUYAYA_URL", "http://127.0.0.1:8848").rstrip("/")
 
 
-def call(path, body=None):
+def call(path, body=None, method=None):
     data = None if body is None else json.dumps(body, ensure_ascii=False).encode("utf-8")
-    req = urllib.request.Request(URL + path, data=data, method="GET" if body is None else "POST",
+    method = method or ("GET" if body is None else "POST")
+    req = urllib.request.Request(URL + path, data=data, method=method,
                                  headers={"Content-Type": "application/json; charset=utf-8"})
     try:
         with urllib.request.urlopen(req, timeout=900) as r:
@@ -45,6 +46,9 @@ def main():
     p = sub.add_parser("motion"); p.add_argument("name")
     p = sub.add_parser("state"); p.add_argument("state")
     p = sub.add_parser("brain"); p.add_argument("name")
+    p = sub.add_parser("remember"); p.add_argument("text")
+    p = sub.add_parser("forget"); p.add_argument("text", nargs="?")
+    p = sub.add_parser("memory")
     for name in ("interrupt", "reset", "brains"):
         sub.add_parser(name)
     a = ap.parse_args()
@@ -63,6 +67,12 @@ def main():
         r = call("/api/brain", {"name": a.name})
     elif a.cmd == "brains":
         r = call("/api/brains")
+    elif a.cmd == "remember":
+        r = call("/api/memory", {"text": a.text})
+    elif a.cmd == "forget":
+        r = call("/api/memory", {"text": a.text} if a.text else None, method="DELETE")
+    elif a.cmd == "memory":
+        r = call("/api/memory")
     else:
         r = call(f"/api/{a.cmd}", {})
     print(json.dumps(r, ensure_ascii=False, indent=2))

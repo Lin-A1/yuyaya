@@ -148,6 +148,14 @@ body {
 }
 #user-line.on { opacity: 1; }
 
+/* 记住了一件事时的提示 */
+#memory-note {
+  position: absolute; left: 10%; right: 10%; bottom: 19%; text-align: center; z-index: 10;
+  pointer-events: none; font-size: 1.05cqw; color: #8fe3d0; letter-spacing: .04em;
+  text-shadow: 0 0 .3cqw #000, 0 .1cqw .3cqw #000; opacity: 0; transition: opacity .45s;
+}
+#memory-note.on { opacity: 1; }
+
 /* ---------- 控制台（OBS 模式隐藏） ---------- */
 #console {
   position: fixed; left: 50%; bottom: 1.6vh; transform: translateX(-50%);

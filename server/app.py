@@ -10,6 +10,8 @@
     POST /api/motion     {"name": "nod|shake|hop|jump|droop|tremble|tilt|wiggle|sniff|sigh"}  做一个动作
     POST /api/state      {"state": "idle|listening|thinking|speaking"}
     POST /api/mouth      {"level": 0.0~1.0}  或 {"levels": [...], "fps": 60}      口型（预留给 TTS 驱动）
+    POST /api/memory    {"text": "..."}                                       让她记住一件事
+    DELETE /api/memory  {"text"?: "..."}                                      忘掉一件事（不给 text 就全忘）
     POST /api/interrupt                                                       打断当前回复（预留给全双工插话）
     POST /api/reset                                                           清空对话历史
     GET  /api/brains     POST /api/brain {"name": "..."}                      查看 / 切换大脑
@@ -30,6 +32,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from .brains import Brain, build_brain
+from .memory import Session
 from .protocol import EMOTION_CN, EMOTIONS, MOTIONS, SpeechStream, normalize_emotion, normalize_motion
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -91,8 +94,11 @@ class Avatar:
         self.conf = conf
         self.brains: dict[str, Brain] = {n: build_brain(n, c) for n, c in conf["brains"].items()}
         self.active = conf.get("default") or next(iter(self.brains))
-        self.history: list[dict] = []
         self.max_turns = conf.get("history_turns", 12)
+        # 会话记忆：短期上下文 + 长期记忆点，落盘保存（state/memory.json）
+        state = pathlib.Path(os.environ.get("YUYAYA_STATE", ROOT / "state" / "memory.json"))
+        self.session = Session(state if conf.get("persist_memory", True) else None, self.max_turns)
+        log.info("记忆: %s（%d 条事实）", state, len(self.session.facts))
         self.ids = itertools.count(1)
         self.lock = threading.Lock()
         self.cancel: threading.Event | None = None
@@ -121,6 +127,11 @@ class Avatar:
         for e in events:
             if e["op"] == "emotion":
                 self.hub.set_emotion(e["name"])
+            elif e["op"] == "memory":
+                if self.session.add_fact(e["text"]):
+                    self.session.save()
+                    self.hub.publish({"type": "memory", "text": e["text"]})
+                    log.info("记住了：%s", e["text"])
             self.hub.publish({"type": "speech", "id": sid, **e})
 
     # ---- 对外能力 ----
@@ -143,24 +154,30 @@ class Avatar:
             raise HTTPException(404, f"unknown brain {brain_name!r}")
         sid, cancel = self._begin()
         pub = self.hub.publish
-        prompt = self.hub.mood_note() + text   # 只给大脑看，历史里仍存用户原话
+        # 只给大脑看的附加信息：当前情绪 + 长期记忆 + 情绪轨迹；历史里仍存用户原话
+        prompt = self.hub.mood_note() + self.session.context() + text
         pub({"type": "user", "id": sid, "text": text})
         pub({"type": "speech", "id": sid, "op": "begin", "source": brain.name})
         pub({"type": "state", "state": "thinking"})
         sp = SpeechStream()
+        sp_events: list[dict] = []
         t0 = time.time()
         first = None
         error = None
         try:
-            for chunk in brain.stream(prompt, self.history[-2 * self.max_turns:], cancel):
+            for chunk in brain.stream(prompt, self.session.messages(), cancel):
                 if cancel.is_set():
                     break
                 if first is None:
                     first = time.time() - t0
                     pub({"type": "stats", "first_token": round(first, 2), "brain": brain.name})
-                self._emit(sid, sp.feed(chunk))
+                evs = sp.feed(chunk)
+                sp_events.extend(evs)
+                self._emit(sid, evs)
             if not cancel.is_set():
-                self._emit(sid, sp.flush())
+                evs = sp.flush()
+                sp_events.extend(evs)
+                self._emit(sid, evs)
         except Exception as e:  # 大脑挂了也要让数字人有反应，而不是卡在"思考中"
             log.exception("brain %s failed", brain.name)
             error = str(e)
@@ -178,8 +195,14 @@ class Avatar:
                 self.cancel = None
         reply = sp.text
         if reply and error is None:
-            self.history += [{"role": "user", "content": text}, {"role": "assistant", "content": reply}]
-            del self.history[:-2 * self.max_turns]
+            # 记下这一轮；助手那侧带上当时的情绪，让大脑知道自己刚才什么状态
+            emo = None
+            for e in sp_events:
+                if e.get("op") == "emotion":
+                    emo = e["name"]
+            self.session.add_turn("user", text)
+            self.session.add_turn("assistant", reply, emo)
+            self.session.save()
         return {"id": sid, "brain": brain.name, "reply": reply, "interrupted": interrupted, "error": error}
 
 
@@ -202,7 +225,8 @@ def create_app() -> FastAPI:
 
         async def gen():
             try:
-                hello = {"type": "hello", **hub.snapshot, **avatar.brain_info(), "emotions": EMOTIONS, "motions": MOTIONS}
+                hello = {"type": "hello", **hub.snapshot, **avatar.brain_info(), **avatar.session.stats(),
+                         "emotions": EMOTIONS, "motions": MOTIONS}
                 yield f"data: {json.dumps(hello, ensure_ascii=False)}\n\n"
                 while True:
                     try:
@@ -265,9 +289,35 @@ def create_app() -> FastAPI:
         avatar.interrupt()
         return {"ok": True}
 
+    @app.get("/api/memory")
+    async def memory():
+        """看她记得什么。"""
+        return {"facts": [f["text"] for f in avatar.session.facts],
+                "turns": len(avatar.session.turns)}
+
+    @app.post("/api/memory")
+    async def add_memory(body: dict = Body(...)):
+        """替她记住一件事（大脑也可以用 [记住:xxx] 标签自己记）。"""
+        text = (body.get("text") or "").strip()
+        if not text:
+            raise HTTPException(400, "text is required")
+        ok = avatar.session.add_fact(text)
+        avatar.session.save()
+        if ok:
+            avatar.hub.publish({"type": "memory", "text": text})
+        return {"ok": ok, "facts": len(avatar.session.facts)}
+
+    @app.delete("/api/memory")
+    async def forget_memory(body: dict = Body(default={})):
+        """忘掉某件事（给 text 就只忘掉那件），不给就全忘。"""
+        n = avatar.session.forget(body.get("text"))
+        avatar.session.save()
+        return {"forgotten": n, "facts": len(avatar.session.facts)}
+
     @app.post("/api/reset")
     async def reset():
-        avatar.history.clear()
+        avatar.session.clear_turns()
+        avatar.session.save()
         return {"ok": True}
 
     @app.get("/api/brains")
