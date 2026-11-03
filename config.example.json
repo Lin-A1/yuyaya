@@ -1,0 +1,51 @@
+{
+  "default": "demo",
+  "history_turns": 12,
+  "brains": {
+    "demo": {
+      "type": "demo",
+      "label": "演示（离线）"
+    },
+    "deepseek": {
+      "type": "openai",
+      "label": "DeepSeek",
+      "base_url": "https://api.deepseek.com",
+      "model": "deepseek-chat",
+      "api_key_env": "DEEPSEEK_API_KEY"
+    },
+    "qwen": {
+      "type": "openai",
+      "label": "通义千问",
+      "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "model": "qwen-plus",
+      "api_key_env": "DASHSCOPE_API_KEY"
+    },
+    "ollama": {
+      "type": "openai",
+      "label": "Ollama 本地",
+      "base_url": "http://127.0.0.1:11434/v1",
+      "model": "qwen2.5:7b"
+    },
+    "claude": {
+      "type": "anthropic",
+      "label": "Claude API",
+      "model": "claude-opus-5-5",
+      "effort": "low",
+      "api_key_env": "ANTHROPIC_API_KEY"
+    },
+    "claude-code": {
+      "type": "cli",
+      "label": "Claude Code CLI",
+      "cmd": ["claude", "-p"],
+      "stdin": true,
+      "timeout": 300
+    },
+    "codex": {
+      "type": "cli",
+      "label": "Codex CLI",
+      "cmd": ["codex", "exec", "--skip-git-repo-check", "--output-last-message", "{outfile}", "-"],
+      "stdin": true,
+      "timeout": 300
+    }
+  }
+}

@@ -1,0 +1,287 @@
+{
+  "scene": {
+    "src": "assets/scene.jpg",
+    "width": 1536,
+    "height": 1024,
+    "screen": {
+      "x": 0.20572916666666666,
+      "y": 0.1181640625,
+      "w": 0.5885416666666666,
+      "h": 0.548828125
+    }
+  },
+  "room": {
+    "src": "assets/room.jpg",
+    "deskTop": 0.83
+  },
+  "sprites": {
+    "width": 966,
+    "height": 1200,
+    "emotions": {
+      "neutral": {
+        "src": "assets/sprites/neutral.webp",
+        "mouth": [
+          {
+            "src": "assets/sprites/neutral__mouth1.webp",
+            "x": 444,
+            "y": 568,
+            "w": 87,
+            "h": 57
+          },
+          {
+            "src": "assets/sprites/neutral__mouth2.webp",
+            "x": 437,
+            "y": 569,
+            "w": 99,
+            "h": 78
+          },
+          {
+            "src": "assets/sprites/neutral__mouth3.webp",
+            "x": 428,
+            "y": 558,
+            "w": 122,
+            "h": 118
+          }
+        ],
+        "blink": {
+          "src": "assets/sprites/neutral__blink.webp",
+          "x": 277,
+          "y": 426,
+          "w": 416,
+          "h": 157
+        }
+      },
+      "happy": {
+        "src": "assets/sprites/happy.webp",
+        "mouth": [
+          {
+            "src": "assets/sprites/happy__mouth1.webp",
+            "x": 442,
+            "y": 565,
+            "w": 91,
+            "h": 62
+          },
+          {
+            "src": "assets/sprites/happy__mouth2.webp",
+            "x": 441,
+            "y": 573,
+            "w": 93,
+            "h": 82
+          },
+          {
+            "src": "assets/sprites/happy__mouth3.webp",
+            "x": 425,
+            "y": 569,
+            "w": 121,
+            "h": 96
+          }
+        ],
+        "blink": null
+      },
+      "sad": {
+        "src": "assets/sprites/sad.webp",
+        "mouth": [
+          {
+            "src": "assets/sprites/sad__mouth1.webp",
+            "x": 423,
+            "y": 584,
+            "w": 34,
+            "h": 40
+          },
+          {
+            "src": "assets/sprites/sad__mouth2.webp",
+            "x": 421,
+            "y": 565,
+            "w": 138,
+            "h": 86
+          },
+          {
+            "src": "assets/sprites/sad__mouth3.webp",
+            "x": 393,
+            "y": 543,
+            "w": 181,
+            "h": 131
+          }
+        ],
+        "blink": {
+          "src": "assets/sprites/sad__blink.webp",
+          "x": 275,
+          "y": 428,
+          "w": 421,
+          "h": 156
+        }
+      },
+      "surprised": {
+        "src": "assets/sprites/surprised.webp",
+        "mouth": [
+          {
+            "src": "assets/sprites/surprised__mouth1.webp",
+            "x": 441,
+            "y": 572,
+            "w": 92,
+            "h": 96
+          },
+          {
+            "src": "assets/sprites/surprised__mouth1.webp",
+            "x": 441,
+            "y": 572,
+            "w": 92,
+            "h": 96
+          },
+          {
+            "src": "assets/sprites/surprised__mouth3.webp",
+            "x": 439,
+            "y": 550,
+            "w": 99,
+            "h": 143
+          }
+        ],
+        "blink": null
+      },
+      "thinking": {
+        "src": "assets/sprites/thinking.webp",
+        "mouth": [
+          {
+            "src": "assets/sprites/thinking__mouth1.webp",
+            "x": 445,
+            "y": 577,
+            "w": 76,
+            "h": 42
+          },
+          {
+            "src": "assets/sprites/thinking__mouth2.webp",
+            "x": 446,
+            "y": 575,
+            "w": 74,
+            "h": 46
+          },
+          {
+            "src": "assets/sprites/thinking__mouth2.webp",
+            "x": 446,
+            "y": 575,
+            "w": 74,
+            "h": 46
+          }
+        ],
+        "blink": {
+          "src": "assets/sprites/thinking__blink.webp",
+          "x": 278,
+          "y": 381,
+          "w": 417,
+          "h": 199
+        }
+      },
+      "shy": {
+        "src": "assets/sprites/shy.webp",
+        "mouth": [
+          {
+            "src": "assets/sprites/shy__mouth1.webp",
+            "x": 452,
+            "y": 595,
+            "w": 77,
+            "h": 45
+          },
+          {
+            "src": "assets/sprites/shy__mouth2.webp",
+            "x": 453,
+            "y": 595,
+            "w": 76,
+            "h": 54
+          },
+          {
+            "src": "assets/sprites/shy__mouth2.webp",
+            "x": 453,
+            "y": 595,
+            "w": 76,
+            "h": 54
+          }
+        ],
+        "blink": {
+          "src": "assets/sprites/shy__blink.webp",
+          "x": 282,
+          "y": 470,
+          "w": 409,
+          "h": 131
+        }
+      },
+      "angry": {
+        "src": "assets/sprites/angry.webp",
+        "mouth": [
+          {
+            "src": "assets/sprites/angry__mouth1.webp",
+            "x": 457,
+            "y": 581,
+            "w": 64,
+            "h": 62
+          },
+          {
+            "src": "assets/sprites/angry__mouth2.webp",
+            "x": 441,
+            "y": 576,
+            "w": 95,
+            "h": 78
+          },
+          {
+            "src": "assets/sprites/angry__mouth3.webp",
+            "x": 406,
+            "y": 566,
+            "w": 169,
+            "h": 114
+          }
+        ],
+        "blink": {
+          "src": "assets/sprites/angry__blink.webp",
+          "x": 283,
+          "y": 437,
+          "w": 411,
+          "h": 147
+        }
+      }
+    },
+    "rig": {
+      "neck": [
+        482.0,
+        687.3
+      ],
+      "face": [
+        482.0,
+        518.8
+      ],
+      "headTop": [
+        482.0,
+        161.4
+      ],
+      "torsoHalf": 229.8,
+      "ahoge": [
+        [
+          500.4,
+          105.2
+        ],
+        [
+          485.1,
+          8.2
+        ]
+      ],
+      "earL": [
+        [
+          188.9,
+          493.3
+        ],
+        [
+          46.0,
+          513.7
+        ]
+      ],
+      "earR": [
+        [
+          776.2,
+          478.0
+        ],
+        [
+          929.4,
+          508.6
+        ]
+      ]
+    }
+  }
+}

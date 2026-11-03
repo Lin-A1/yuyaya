@@ -1,0 +1,11 @@
+config.json
+.env
+__pycache__/
+gen/_*
+gen/shot*
+gen/seq*
+gen/*.png
+out/
+.DS_Store
+*.pyc
+refs/

@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>大肥鱼 · 数字生命</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div id="stage">
+  <img id="scene" alt="">
+
+  <div id="screen">
+    <div id="feed">
+      <img class="room" alt="">
+      <div id="char"><div id="char-body"></div></div>
+      <img class="room desk" alt="">
+    </div>
+
+    <div id="hud">
+      <div class="hud-top">
+        <span class="glyph">Л</span>
+        <span class="bar w18"></span><span class="bar w10"></span>
+        <span class="spacer"></span>
+        <span class="tiny">MOSS·550W</span><span class="sq"></span><span class="bar w12"></span>
+      </div>
+
+      <div class="hud-left">
+        <section>
+          <h6>DIGITAL LIFE SESSION</h6>
+          <div class="row"><span>SUBJECT</span><b>DA·FEIYU</b></div>
+          <div class="row"><span>SESSION</span><b id="hud-session">0001</b></div>
+        </section>
+        <section>
+          <h6>COGNITION CORE</h6>
+          <div class="row"><span>BRAIN</span><b id="hud-brain">—</b></div>
+          <div class="row"><span>MODEL</span><b id="hud-model">—</b></div>
+          <div class="row"><span>LATENCY</span><b id="hud-latency">—</b></div>
+        </section>
+        <section>
+          <h6>EMOTION MATRIX</h6>
+          <div class="row"><span>STATE</span><b id="hud-state">IDLE</b></div>
+          <div class="row"><span>EMOTION</span><b id="hud-emotion">NEUTRAL</b></div>
+          <div class="meter"><i id="hud-meter"></i></div>
+        </section>
+        <section>
+          <h6>MEMORY CAPSULE</h6>
+          <div class="row"><span>TURNS</span><b id="hud-turns">0</b></div>
+          <div class="row"><span>LINK</span><b id="hud-link">OFFLINE</b></div>
+        </section>
+      </div>
+
+      <div class="hud-right">
+        <div class="bar w16"></div>
+        <div class="bar w9"></div>
+        <div class="bar w12"></div>
+      </div>
+
+      <div class="hud-bottom">
+        <div class="rec"><span id="rec-icon"></span></div>
+        <div id="timer">00:00:00</div>
+        <div class="progress"><i id="progress"></i></div>
+        <div class="capsule">ACTIVE MEMORY CAPSULE</div>
+      </div>
+    </div>
+
+    <div class="fx tint"></div>
+    <div class="fx scan"></div>
+    <div class="fx noise"></div>
+    <div class="fx vignette"></div>
+    <div class="fx glare"></div>
+  </div>
+
+  <div id="user-line"></div>
+  <div id="subtitle"></div>
+</div>
+
+<form id="console" autocomplete="off">
+  <select id="brain-select" title="切换大脑"></select>
+  <input id="input" placeholder="对大肥鱼说点什么…（Enter 发送，Esc 打断）" maxlength="2000">
+  <button type="submit">发送</button>
+</form>
+
+<script src="js/rig.js"></script>
+<script src="js/avatar.js"></script>
+<script src="js/remote.js"></script>
+<script src="js/speech.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>
