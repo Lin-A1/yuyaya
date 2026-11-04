@@ -8,7 +8,7 @@
     python tools/game.py focus "记事本"              聚焦窗口
     python tools/game.py info                       屏幕尺寸 / DPI 模式
 
-配套的 MCP 版是 tools/game_mcp_server.py，HTTP 版是 POST /api/game/*。
+配套的操作入口见 server/actions.py。
 三种外壳共用 tools/game_control/win.py 一份实现。
 
 ⚠ 坐标：click / move 收的是**截图上的像素坐标**（和 shot 出来的图一致）。

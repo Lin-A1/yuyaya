@@ -6,6 +6,7 @@ import os
 import pathlib
 import sys
 import tempfile
+import time
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 for _s in (sys.stdout, sys.stderr):
@@ -61,6 +62,10 @@ def test_api() -> None:
             "cmd": [sys.executable, "-c", "print('action ok')"],
         },
         "voice": {"tts": {"enabled": True, "volume": 20}},
+        "io": {
+            "inputs": [{"type": "http"}, {"type": "browser_speech"}],
+            "outputs": [{"type": "sse"}, {"type": "recorder", "name": "rec"}],
+        },
     }
     cfg_path = tmp / "config.json"
     cfg_path.write_text(json.dumps(cfg, ensure_ascii=False), encoding="utf-8")
@@ -82,6 +87,62 @@ def test_api() -> None:
             r = client.post("/api/tts", json={"text": "你好", "volume": 20})
             check("TTS 接口", r.status_code == 200 and r.content[:4] == b"RIFF",
                   f"{r.status_code} {len(r.content)} bytes")
+
+            # 统一输入入口
+            r = client.post("/api/input", json={"type": "text", "text": "今天天气怎么样", "wait": True})
+            check("统一输入走聊天模型", r.status_code == 200 and r.json().get("brain") == "demo",
+                  r.text[:120])
+            r = client.post("/api/input", json={"type": "text", "text": ""})
+            check("空输入被拒", r.status_code == 400, r.text[:80])
+
+            # 全双工：一开口就打断正在进行的回答
+            rec = client.app.state.outputs["rec"]
+            rec.clear()
+            client.post("/api/chat", json={"text": "给我讲一个很长很长的故事", "wait": False})
+            time.sleep(0.15)
+            r = client.post("/api/input", json={"type": "speech_start"})
+            check("speech_start 返回 200", r.status_code == 200, r.text[:80])
+            time.sleep(2.2)
+            ev = rec.snapshot()
+            ints = [e for e in ev if e.get("type") == "interrupt"]
+            check("一开口触发打断", any(e.get("reason") == "speech_start" for e in ints),
+                  str([(e.get("type"), e.get("reason")) for e in ev][-10:]))
+            old_ids = {e.get("id") for e in ev if e.get("type") == "speech"
+                       and e.get("id") and e.get("id") != 0}
+            r = client.post("/api/input", json={"type": "speech_final", "text": "你好呀", "wait": True})
+            check("说完后能正常回答", r.status_code == 200 and bool(r.json().get("reply")),
+                  r.text[:120])
+
+            # TTS provider 注册表
+            cfg2 = client.get("/api/voice/config").json()
+            check("TTS provider 从注册表来", cfg2["tts"].get("provider") == "sapi",
+                  str(cfg2.get("tts")))
+            check("voice config 带 realtime 能力", "realtime" in cfg2, str(cfg2)[:120])
+
+            # Codex 工具：同步执行并拿回结果（实时语音用它和 Codex 交互）
+            time.sleep(0.3)
+            res = client.app.state.avatar.actions.run("测试任务", timeout=20)
+            check("Codex 工具返回输出", res.get("ok") is True and "action ok" in res.get("output", ""),
+                  str(res)[:160])
+
+            # 实时语音运行时：没配 key 时不可用，但工具表里要有动手的工具 do_task
+            rt = client.app.state.realtime
+            check("realtime 未配 key 时不可用", rt.available is False, str(rt.info()))
+            check("realtime 工具包含 do_task",
+                  any(s.get("name") == "do_task" for s in __import__("server.realtime.tools", fromlist=["TOOL_SCHEMAS"]).TOOL_SCHEMAS),
+                  str(rt.info()))
+
+            # 后台 agent 编排 + 前台自主触发（假 CLI 后端，不花 token）
+            sys.path.insert(0, str(pathlib.Path(__file__).parent))
+            from selftest_agents import agents_suite
+            agents_suite(client, tmp, check)
+
+            try:
+                with client.websocket_connect("/ws/voice") as ws:
+                    msg = ws.receive_json()
+                check("realtime 关闭时 WS 返回错误", msg.get("type") == "error", str(msg)[:120])
+            except Exception as e:
+                check("realtime 关闭时 WS 返回错误", False, f"{type(e).__name__}: {e}")
     finally:
         if old_cfg is None:
             os.environ.pop("YUYAYA_CONFIG", None)

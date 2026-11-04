@@ -243,16 +243,27 @@ class BrowserVoice {
   }
   speak(text) {
     return new Promise((res) => {
+      this.pending = res;
       const u = new SpeechSynthesisUtterance(text);
       if (this.voice) u.voice = this.voice;
       u.lang = "zh-CN";
       u.pitch = 1.5;
       u.rate = 1.05;
-      u.onend = u.onerror = () => res();
+      u.onend = u.onerror = () => {
+        if (this.pending === res) this.pending = null;
+        res();
+      };
       speechSynthesis.speak(u);
     });
   }
-  cancel() { speechSynthesis.cancel(); }
+  cancel() {
+    speechSynthesis.cancel();
+    if (this.pending) {
+      const done = this.pending;
+      this.pending = null;
+      done();          // 被打断时也要让 speak() 的 Promise 落地
+    }
+  }
 }
 
 /** 本机 SAPI TTS：音频从服务端取回，AnalyserNode 直接驱动当前通道口型。 */
@@ -277,9 +288,14 @@ class ServerVoice {
   }
 
   async speak(text, ch = "main") {
+    const gen = ++this.playGen;       // 一开始就占据这一代，打断即失效
+    const ac = new AbortController();
+    this.abort = ac;
+    this.channel = ch;
     try {
       const ctx = await this.ensureContext();
       if (ctx.state !== "running") throw new Error("audio context is locked");
+      if (gen !== this.playGen) return;
       const res = await fetch("/api/tts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -289,13 +305,14 @@ class ServerVoice {
           rate: this.conf.rate || 0,
           volume: this.conf.volume ?? 100,
         }),
+        signal: ac.signal,
       });
       if (!res.ok) throw new Error(`TTS HTTP ${res.status}`);
       const audio = await ctx.decodeAudioData(await res.arrayBuffer());
-      return await new Promise((resolve) => {
-        this.cancel();
-        const playGen = ++this.playGen;
-        this.channel = ch;
+      if (gen !== this.playGen) return;       // fetch/decode 期间被打断
+      await new Promise((resolve) => {
+        if (gen !== this.playGen) { resolve(); return; }
+        this._stopSourceOnly();
         const src = ctx.createBufferSource();
         const analyser = ctx.createAnalyser();
         const gain = ctx.createGain();
@@ -304,19 +321,20 @@ class ServerVoice {
         src.buffer = audio;
         src.connect(analyser).connect(gain).connect(ctx.destination);
         this.source = src;
-        this._mouth(analyser, ch, playGen);
+        this._mouth(analyser, ch, gen);
         src.onended = () => {
-          if (playGen !== this.playGen) return;
-          this._stopMouth(ch);
           if (this.source === src) this.source = null;
-          resolve();
+          resolve();                            // 被打断也要落地，别让 _speak 卡住
         };
         src.start();
       });
     } catch (e) {
+      if (gen !== this.playGen) return;         // AbortError：打断导致的，静默
       console.warn("[tts]", e.message, "falling back to browser voice");
       if (!this.fallback) throw e;
       await this.fallback.speak(text);
+    } finally {
+      if (this.abort === ac) this.abort = null;
     }
   }
 
@@ -344,13 +362,21 @@ class ServerVoice {
     this.avatar.setMouthLevel(0, ch);
   }
 
-  cancel() {
-    this.playGen++;
+  _stopSourceOnly() {
     if (this.source) {
       try { this.source.stop(); } catch (_) {}
       this.source = null;
     }
     this._stopMouth();
+  }
+
+  cancel() {
+    this.playGen++;
+    if (this.abort) {
+      try { this.abort.abort(); } catch (_) {}
+      this.abort = null;
+    }
+    this._stopSourceOnly();
     if (this.fallback) this.fallback.cancel();
   }
 }

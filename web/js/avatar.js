@@ -38,6 +38,9 @@ const BRIDGE = {
 };
 const POSE_FADE = { sad: 2.2, angry: 1.6, shy: 1, default: 0.6 };
 const POSE_KEYS = ["roll", "yaw", "pitch", "lean", "ear"];
+/* 空闲收表情：停止说话/倾听后，强情绪再挂多久（秒）就自然回到平静。
+ * 不在这里的表情（neutral）不衰减；有路线时仍走 BRIDGE 平滑过渡。 */
+const EMO_LINGER = { happy: 6, sad: 12, surprised: 4, shy: 4, angry: 8 };
 
 class Avatar {
   constructor(charEl, manifest) {
@@ -48,6 +51,7 @@ class Avatar {
     this.mood = "neutral";            // 此刻所处的情绪阶段，沿 path 一步步走向 emotion
     this.moodSince = 0;
     this.moodUntil = 0;
+    this.idleSince = performance.now();   // 进入空闲的时刻：空闲多久后才收掉强情绪
     this.path = [];                   // 还要经过的阶段 [{ emo, dur?, motion? }]，最后一个是目标
     this.state = "idle";
     this.talking = false;
@@ -160,6 +164,7 @@ class Avatar {
 
   setState(state) {
     const prev = this.displayEmotion;
+    if (state === "idle" && this.state !== "idle") this.idleSince = performance.now();
     this.state = state;
     this._refresh(prev, false);
   }
@@ -254,6 +259,12 @@ class Avatar {
   }
 
   _face(now, dt) {
+    // 空闲时强情绪自然回落：害羞/惊讶这类反应情绪不能一直挂在脸上
+    const linger = EMO_LINGER[this.mood];
+    if (linger && this.state === "idle" && !this.path.length && !this.temporaryEmotion &&
+        now - Math.max(this.idleSince, this.moodSince) > linger * 1000) {
+      this.setEmotion("neutral");
+    }
     // 临时表情到时只恢复之前的情绪，不清空持续情绪
     if (this.temporaryEmotion && now >= this.temporaryUntil) {
       const prev = this.displayEmotion;

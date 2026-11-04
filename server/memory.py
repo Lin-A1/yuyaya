@@ -1,7 +1,7 @@
 """会话记忆：短期上下文 + 长期记忆点。
 
     turns   最近的对话轮次（user / assistant 交替），重启后仍在
-    facts   长期记忆点（"爸爸喜欢喝奶茶"），由 [记住:xxx] 标签或 /api/memory 写入
+    facts   长期记忆点（"用户喜欢喝奶茶"），由 [记住:xxx] 标签或 /api/memory 写入
 
 两个都存在 state/memory.json（可用 YUYAYA_STATE 指定路径），写入是原子的，
 避免服务被 kill 时写坏文件。

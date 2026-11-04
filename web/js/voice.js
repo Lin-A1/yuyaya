@@ -1,8 +1,9 @@
 /* Continuous browser speech input with barge-in. Server TTS handles replies. */
 class VoiceSession {
-  constructor({ onText, onState = () => {} } = {}) {
+  constructor({ onText, onState = () => {}, onSpeechStart = () => {} } = {}) {
     this.onText = onText;
     this.onState = onState;
+    this.onSpeechStart = onSpeechStart;   // 一开口就通知（全双工打断）
     this.active = false;
     this.recognition = null;
     this.stream = null;
@@ -47,7 +48,11 @@ class VoiceSession {
     rec.lang = "zh-CN";
 
     rec.onstart = () => this.active && this.onState("listening");
-    rec.onspeechstart = () => this.active && this.onState("speech");
+    rec.onspeechstart = () => {
+      if (!this.active) return;
+      this.onState("speech");
+      this.onSpeechStart();
+    };
     rec.onerror = (e) => {
       if (e.error === "not-allowed" || e.error === "service-not-allowed") {
         this.stop();

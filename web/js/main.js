@@ -29,12 +29,15 @@ async function main() {
   layout(manifest);
   new ResizeObserver(() => layout(manifest)).observe($("#feed"));
 
+  const realtime = await createRealtime(avatar, params);
+  // 本机 TTS 始终准备着：没开全双工语音时（打字聊天、没 key 的退路）靠它出声
   const voice = await createVoice(avatar, params);
   const player = new SpeechPlayer({ avatar, subtitle: $("#subtitle"), voice });
+  player.base = { sub: $("#subtitle"), voice };   // 全双工开着时临时换掉，关了再还原
   const hud = new Hud(avatar);
-  connect({ avatar, player, hud });
-  const voiceChat = setupVoice({ avatar, player });
-  setupConsole({ avatar, player, voiceChat });
+  connect({ avatar, player, hud, realtime });
+  const voiceChat = setupVoice({ avatar, player, realtime });
+  setupConsole({ avatar, player, voiceChat, realtime });
 }
 
 async function createVoice(avatar, params) {
@@ -51,17 +54,69 @@ async function createVoice(avatar, params) {
   return browser;
 }
 
-function setupVoice({ avatar, player }) {
+async function createRealtime(avatar, params) {
+  if (params.get("realtime") === "0") return null;
+  try {
+    const cfg = await fetch("/api/voice/config").then((r) => r.json());
+    const rt = cfg.realtime || {};
+    if (!rt.enabled) return null;
+    const voice = new RealtimeVoice(avatar, rt);
+    if (!voice.supported) return null;
+    return voice;
+  } catch (e) {
+    console.warn("[realtime]", e);
+    return null;
+  }
+}
+
+function setupVoice({ avatar, player, realtime = null }) {
   const btn = $("#mic-btn");
   if (!btn) return null;
+  if (realtime) {
+    const labels = { off: "语音", connecting: "连接中", on: "语音中", denied: "无权限" };
+    const setState = (state) => {
+      btn.textContent = labels[state] || "语音";
+      btn.setAttribute("aria-pressed", String(state === "on"));
+      btn.dataset.state = state;
+    };
+    setState("off");
+    // 全双工开着：字幕由 RealtimeVoice 按转写增量画，音频由它播，播放器只管表情/动作
+    const dummy = document.createElement("div");
+    const takeOver = () => { player.interrupt(); player.sub = dummy; player.voice = null; };
+    const giveBack = () => { player.sub = player.base.sub; player.voice = player.base.voice; };
+    realtime.onClose = () => { giveBack(); setState("off"); };   // 服务端断开（长时间无输入等）
+    btn.addEventListener("click", async () => {
+      if (realtime.active) {
+        realtime.stop();
+        giveBack();
+        setState("off");
+      } else {
+        try {
+          setState("connecting");
+          await realtime.start();
+          takeOver();
+          setState("on");
+        } catch (e) {
+          realtime.stop();
+          btn.title = e.message;
+          setState("denied");
+        }
+      }
+    });
+    addEventListener("beforeunload", () => realtime.stop());
+    return realtime;
+  }
   const labels = { off: "语音", listening: "聆听中", speech: "在听", heard: "处理中", denied: "无权限" };
   const session = new VoiceSession({
-    onText: (text) => {
-      api("/api/interrupt", {});
+    onSpeechStart: () => {
+      // 一开口：本地先停字幕/TTS，再告诉服务端取消大脑请求
       player.interrupt();
-      avatar.setState("idle");
+      avatar.setState("listening");
+      api("/api/input", { type: "speech_start" }).catch(() => {});
+    },
+    onText: (text) => {
       showUserLine(text);
-      api("/api/chat", { text, wait: false, voice: true });
+      api("/api/input", { type: "speech_final", text, wait: false }).catch(() => {});
     },
     onState: (state) => {
       const on = state === "listening" || state === "speech" || state === "heard";
@@ -109,7 +164,7 @@ function layout(manifest) {
 }
 
 // ---------------- 事件总线 ----------------
-function connect({ avatar, player, hud }) {
+function connect({ avatar, player, hud, realtime = null }) {
   const es = new EventSource("/api/events");
   es.onopen = () => hud.set("link", "ONLINE");
   es.onerror = () => hud.set("link", "RECONNECTING");
@@ -134,8 +189,10 @@ function connect({ avatar, player, hud }) {
         else player.push(e);
         break;
       case "state":
-        if (e.state === "thinking" && !$("#subtitle").textContent) $("#subtitle").innerHTML = '<span class="dots"></span>';
-        if (e.state !== "thinking") $("#subtitle .dots")?.remove();
+        if (!realtime?.active) {
+          if (e.state === "thinking" && !$("#subtitle").textContent) $("#subtitle").innerHTML = '<span class="dots"></span>';
+          if (e.state !== "thinking") $("#subtitle .dots")?.remove();
+        }
         avatar.setState(e.state);
         break;
       case "emotion":
@@ -153,7 +210,9 @@ function connect({ avatar, player, hud }) {
         break;
       case "interrupt":
         player.interrupt();
-        avatar.setState("idle");
+        // 只在本地停音频：服务端发的 interrupt 已经取消了模型回答，再回传 cancel 会形成回环
+        if (realtime?.active) { realtime.flush(); realtime.clearCaption(); }
+        avatar.setState(realtime?.active ? "listening" : "idle");
         break;
       case "action_log":
         console.log("[action]", e.text);
@@ -240,21 +299,23 @@ class Hud {
 }
 
 // ---------------- 控制台 ----------------
-function setupConsole({ voiceChat = null } = {}) {
+function setupConsole({ voiceChat = null, realtime = null } = {}) {
   const form = $("#console"), input = $("#input"), sel = $("#brain-select");
   form.addEventListener("submit", (ev) => {
     ev.preventDefault();
     const text = input.value.trim();
     if (!text) return;
     input.value = "";
-    api("/api/chat", { text, wait: false, voice: false });
+    // 全双工开着：打字也走实时模型（她用同一个声音回答）；否则走聊天大脑 + 本机 TTS
+    if (realtime?.active && realtime.sendText(text)) showUserLine(text);
+    else api("/api/chat", { text, wait: false, voice: false });
   });
   sel.addEventListener("change", () => api("/api/brain", { name: sel.value }));
 
   const EMO_KEYS = ["neutral", "happy", "sad", "surprised", "thinking", "shy", "angry"];
   const MOTION_KEYS = { n: "nod", s: "shake", h: "hop", j: "jump", d: "droop", t: "tremble", g: "tilt", w: "wiggle", f: "sniff", x: "sigh" };
   document.addEventListener("keydown", (ev) => {
-    if (ev.key === "Escape") { api("/api/interrupt", {}); input.blur(); return; }
+    if (ev.key === "Escape") { realtime?.cancel(); api("/api/interrupt", {}); input.blur(); return; }
     if (document.activeElement === input) return;
     if (ev.key === "Enter") { ev.preventDefault(); showConsole(); input.focus(); return; }
     const i = Number(ev.key) - 1;

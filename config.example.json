@@ -36,31 +36,43 @@
     "claude-code": {
       "type": "cli",
       "label": "Claude Code CLI",
-      "cmd": ["claude", "-p"],
+      "cmd": [
+        "claude",
+        "-p"
+      ],
       "stdin": true,
       "timeout": 300
     },
     "codex": {
       "type": "cli",
       "label": "Codex CLI",
-      "cmd": ["codex", "exec", "--skip-git-repo-check", "--output-last-message", "{outfile}", "-"],
+      "cmd": [
+        "codex",
+        "exec",
+        "--skip-git-repo-check",
+        "--output-last-message",
+        "{outfile}",
+        "-"
+      ],
       "stdin": true,
       "timeout": 300
     }
   },
-
   "actions": {
     "enabled": true,
-    "cmd": ["codex", "exec", "--skip-git-repo-check", "-"],
+    "cmd": [
+      "codex",
+      "exec",
+      "--skip-git-repo-check",
+      "-"
+    ],
     "cwd": "",
     "ack": "好，我去弄一下！",
     "timeout": 180
   },
-
   "security": {
     "allow_remote_actions": false
   },
-
   "voice": {
     "tts": {
       "enabled": true,
@@ -69,5 +81,97 @@
       "rate": 0,
       "volume": 100
     }
+  },
+  "io": {
+    "inputs": [
+      {
+        "type": "http"
+      },
+      {
+        "type": "browser_speech",
+        "barge_in": "speech_start"
+      }
+    ],
+    "outputs": [
+      {
+        "type": "sse"
+      },
+      {
+        "type": "action_log"
+      }
+    ]
+  },
+  "realtime": {
+    "enabled": false,
+    "provider": "qwen",
+    "model": "qwen-audio-3.1-realtime-flash",
+    "api_key_env": "DASHSCOPE_API_KEY",
+    "voice": "qiaoxiaojiao_v3.1",
+    "input_sample_rate": 16000,
+    "output_sample_rate": 24000,
+    "vad_threshold": 0.5,
+    "silence_duration_ms": 500,
+    "tools": true
+  },
+  "agents": {
+    "enabled": true,
+    "default": "codex",
+    "max_concurrent": 2,
+    "max_refine": 1,
+    "routing": {
+      "desktop": "codex",
+      "code": "claude",
+      "search": "claude"
+    },
+    "backends": {
+      "codex": {
+        "type": "cli",
+        "cmd": [
+          "codex",
+          "exec",
+          "--skip-git-repo-check",
+          "--output-last-message",
+          "{outfile}",
+          "-"
+        ],
+        "timeout": 180
+      },
+      "claude": {
+        "type": "cli",
+        "cmd": [
+          "claude",
+          "-p",
+          "--permission-mode",
+          "acceptEdits",
+          "--allowedTools",
+          "Write",
+          "Edit",
+          "Read",
+          "Bash",
+          "Glob",
+          "Grep",
+          "WebSearch",
+          "WebFetch"
+        ],
+        "timeout": 300
+      },
+      "opencode": {
+        "type": "cli",
+        "enabled": true,
+        "cmd": [
+          "opencode",
+          "run",
+          "{prompt}"
+        ],
+        "timeout": 300
+      }
+    }
+  },
+  "initiative": {
+    "enabled": true,
+    "cooldown": 90,
+    "hourly_cap": 6,
+    "quiet_minutes": 30,
+    "idle_chat_seconds": 0
   }
 }
