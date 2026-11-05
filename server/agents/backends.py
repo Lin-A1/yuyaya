@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 import pathlib
+import re
 import shutil
 import subprocess
 import tempfile
@@ -14,6 +15,8 @@ import threading
 from typing import Callable
 
 from ..brains.cli import _kill_tree
+
+_ANSI = re.compile(r"\[[0-9;?]*[ -/]*[@-~]")
 
 
 class AgentBackend:
@@ -100,7 +103,7 @@ class CLIBackend(AgentBackend):
                     buf += c
                     *lines, buf = buf.split(b"\n")
                     for ln in lines:
-                        t = ln.decode("utf-8", "replace").strip()
+                        t = _ANSI.sub("", ln.decode("utf-8", "replace")).strip()
                         if t:
                             emit(t)
 
@@ -120,7 +123,7 @@ class CLIBackend(AgentBackend):
                 th.join(timeout=2)
                 raise
             th.join(timeout=2)
-            text = b"".join(chunks).decode("utf-8", "replace").strip()
+            text = _ANSI.sub("", b"".join(chunks).decode("utf-8", "replace")).strip()
             if outfile and os.path.exists(outfile):
                 final = pathlib.Path(outfile).read_text(encoding="utf-8", errors="replace").strip()
                 if final:

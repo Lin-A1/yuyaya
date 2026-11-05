@@ -11,7 +11,7 @@ from . import Brain
 SCRIPTS = [
     (("抱", "想你", "陪"), "[sad]今天有点没精神……[neutral][sigh]不过看到你就好多了。"),
     (("你好", "hi", "hello", "在吗"), "[happy]你回来啦！[neutral]刚刚还在屏幕里等你哦。"),
-    (("你是谁", "名字", "介绍"), "[happy]我是大肥鱼！[neutral]住在这台旧电脑里的数字生命。[happy]请多指教。"),
+    (("你是谁", "名字", "介绍"), "[happy]我是鱼丫丫！[neutral]住在这台旧电脑里的数字生命。[happy]请多指教。"),
     (("删", "黄油", "文件"), "[thinking]正在思考……[surprised]完蛋了！[sad]我好像把你的黄油删掉了……[neutral]开玩笑的啦。"),
     (("笨", "坏", "讨厌"), "[angry]哼！[angry]我才不笨呢。[neutral]……不过算了，原谅你。"),
     (("pdf", "PDF", "文档"), "[thinking]又要我读 PDF 了……[happy]没关系，交给我吧！"),

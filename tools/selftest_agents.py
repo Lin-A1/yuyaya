@@ -32,6 +32,13 @@ print("完成:" + task[:30] + pre)
 '''
 
 
+FAKE_ARG_AGENT = r'''
+import sys
+p = sys.argv[1] if len(sys.argv) > 1 else ""
+print("ARGOK" if "参数路径测试" in p else "ARGNO")
+'''
+
+
 def _wait(fn, timeout=15.0, step=0.1):
     t = time.time()
     while time.time() - t < timeout:
@@ -69,12 +76,16 @@ def agents_suite(client, tmp: pathlib.Path, check) -> None:
 
     fake = tmp / "fake_agent.py"
     fake.write_text(FAKE_AGENT, encoding="utf-8")
+    argfake = tmp / "fake_arg_agent.py"
+    argfake.write_text(FAKE_ARG_AGENT, encoding="utf-8")
     flag = tmp / "flaky.flag"
     cmd = [sys.executable, str(fake), str(flag)]
     conf = {"agents": {"default": "a", "max_concurrent": 2, "max_refine": 1,
                        "routing": {"code": "b"},
                        "backends": {"a": {"cmd": cmd, "timeout": 20},
                                     "b": {"cmd": cmd, "timeout": 20},
+                                    "arg": {"cmd": [sys.executable, str(argfake), "{prompt}"],
+                                            "timeout": 20},
                                     "ghost": {"cmd": ["no-such-agent-cli-xyz"]}}}}
     bus = EventBus()
     seen: list = []
@@ -96,6 +107,10 @@ def agents_suite(client, tmp: pathlib.Path, check) -> None:
     check("按 kind 路由到后端 b", r.get("backend") == "b", str(r))
     r2 = orch.start("点名不可用后端", backend="ghost")
     check("后端不可用时回退并说明", r2.get("backend") == "a" and "ghost" in (r2.get("note") or ""), str(r2))
+    ja_arg = orch.get(orch.start("参数路径测试", backend="arg")["job_id"])
+    check("{prompt} 占位符把提示词作为参数传入（OpenCode 形态）",
+          bool(_wait(lambda: ja_arg.status == "done")) and "ARGOK" in (ja_arg.result or ""),
+          f"{ja_arg.status} {ja_arg.result[:60]}")
     _wait(lambda: all(j.status not in ("queued", "running") for j in orch.store.jobs.values()), 20)
 
     # 3) 并发与排队
@@ -144,6 +159,13 @@ def agents_suite(client, tmp: pathlib.Path, check) -> None:
     j_bad = orch.start("FAIL 前置失败", backend="a")["job_id"]
     j_dep = orch.get(orch.start("依赖失败任务", backend="b", depends_on=[j_bad])["job_id"])
     check("前置失败则后继直接失败", bool(_wait(lambda: j_dep.status == "failed", 30)), j_dep.status)
+
+    # 8.5) 工作目录不存在时自动创建
+    newdir = tmp / "auto" / "sub"
+    jw = orch.get(orch.start("SHORT 自动建目录", backend="a", cwd=str(newdir))["job_id"])
+    check("工作目录不存在时自动创建并执行",
+          bool(_wait(lambda: jw.status == "done", 15)) and newdir.exists(),
+          f"{jw.status} exists={newdir.exists()}")
 
     # 9) 确认闸
     r = orch.start("把下载目录里的文件全部删除")
@@ -247,7 +269,7 @@ def agents_suite(client, tmp: pathlib.Path, check) -> None:
           not any(w in schema_text for w in ("codex", "claude", "opencode", "后台 agent", "\"backend\"")),
           str([w for w in ("codex", "claude", "opencode", "backend") if w in schema_text]))
     p = build_prompt(pathlib.Path("."), orch.get(ja.id), [], "", ["用户喜欢用 D 盘存文件"])
-    check("动手时带上共同记忆", "用户喜欢用 D 盘存文件" in p and "大肥鱼" in p, p[:80])
+    check("动手时带上共同记忆", "用户喜欢用 D 盘存文件" in p and "鱼丫丫" in p, p[:80])
     rt = client.app.state.realtime
     out = json.loads(execute(rt, "do_task", {"task": "清空回收站"}))
     check("工具层同样触发确认闸", out.get("needs_confirm") is True, str(out)[:100])
@@ -265,6 +287,50 @@ def agents_suite(client, tmp: pathlib.Path, check) -> None:
     check("工具 quiet 进入勿扰", out.get("ok") is True, str(out))
     instr = rt.base_instructions
     check("她的指令里不提后端名字", not any(w in instr for w in ("Codex", "Claude", "OpenCode")), "")
+
+    # ---------- 兜底：口头答应却没动手 ----------
+    import asyncio
+    import types
+
+    class FakeSock:
+        def __init__(self):
+            self.sent = []
+
+        async def send_json(self, payload):
+            self.sent.append(payload)
+            return True
+
+    async def nudge_case():
+        from server.realtime.runtime import _Bridge
+        fake_rt = types.SimpleNamespace(hub=EventBus(), avatar=types.SimpleNamespace())
+        up, ws = FakeSock(), FakeSock()
+        b = _Bridge(fake_rt, ws, up)
+        b.user_turn_text = "帮我把明天下午三点开会加到我的待办里"
+        b.caption_raw = "好，我这就去加，稍等一下。"
+        await b._maybe_nudge()
+        created = [p for p in up.sent if p.get("type") == "conversation.item.create"]
+        first = len(up.sent)
+        await b._maybe_nudge()
+        return created, first, len(up.sent), up
+
+    created, first, second, up = asyncio.run(nudge_case())
+    check("口头答应却没调工具时，服务端会提醒她",
+          bool(created) and "系统提示" in created[0]["item"]["content"][0]["text"], str(up.sent)[:150])
+    check("同一轮只提醒一次", first == second and first > 0, f"{first}->{second}")
+
+    async def no_nudge(tool=False, commit=True):
+        from server.realtime.runtime import _Bridge
+        fake_rt = types.SimpleNamespace(hub=EventBus(), avatar=types.SimpleNamespace())
+        up, ws = FakeSock(), FakeSock()
+        b = _Bridge(fake_rt, ws, up)
+        b.user_turn_text = "帮我把开会加到待办里"
+        b.user_turn_has_task = tool
+        b.caption_raw = "好，我这就去加。" if commit else "开会是下午三点。"
+        await b._maybe_nudge()
+        return up.sent
+
+    check("真的调了 do_task 就不再提醒", not asyncio.run(no_nudge(tool=True)), "")
+    check("只是普通回答不会被误提醒", not asyncio.run(no_nudge(commit=False)), "")
 
     # ---------- HTTP ----------
     r = client.get("/api/jobs")

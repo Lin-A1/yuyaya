@@ -119,7 +119,7 @@
     "max_concurrent": 2,
     "max_refine": 1,
     "routing": {
-      "desktop": "codex",
+      "desktop": "codex-desktop",
       "code": "claude",
       "search": "claude"
     },
@@ -134,7 +134,7 @@
           "{outfile}",
           "-"
         ],
-        "timeout": 180
+        "timeout": 300
       },
       "claude": {
         "type": "cli",
@@ -161,7 +161,23 @@
         "cmd": [
           "opencode",
           "run",
+          "--auto",
+          "-m",
+          "opencode/deepseek-v4.1-flash-free",
           "{prompt}"
+        ],
+        "timeout": 300
+      },
+      "codex-desktop": {
+        "cmd": [
+          "codex",
+          "exec",
+          "--skip-git-repo-check",
+          "-s",
+          "danger-full-access",
+          "--output-last-message",
+          "{outfile}",
+          "-"
         ],
         "timeout": 300
       }

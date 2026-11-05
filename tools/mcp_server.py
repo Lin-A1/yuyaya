@@ -1,4 +1,4 @@
-"""MCP 服务器（stdio）：让 Claude Code / Codex / Cursor 等 agent 把大肥鱼当成"嘴巴和脸"来用。
+"""MCP 服务器（stdio）：让 Claude Code / Codex / Cursor 等 agent 把鱼丫丫当成"嘴巴和脸"来用。
 
 agent 在干活时可以调用 yaya_say 向用户播报进度、用表情表达状态，
 数字人页面会实时显示字幕和表情。只依赖标准库，按 MCP 2025-06-18 的 JSON-RPC 规范实现。
@@ -21,7 +21,7 @@ MOTIONS = ["nod", "shake", "hop", "jump", "droop", "tremble", "tilt", "wiggle", 
 TOOLS = [
     {
         "name": "yaya_say",
-        "description": "让数字人大肥鱼对用户说一段话（显示为字幕并带口型）。适合播报进度、汇报结果、"
+        "description": "让数字人鱼丫丫对用户说一段话（显示为字幕并带口型）。适合播报进度、汇报结果、"
                        "和用户打招呼。每句话尽量短（不超过 25 字）。文本里可插入情绪标签切换表情，"
                        "例如 \"[happy]搞定啦！[shy]夸夸我。\"；也可插入动作标签 [nod] [hop] [tilt] 等。默认排在上一句后面播放。",
         "inputSchema": {

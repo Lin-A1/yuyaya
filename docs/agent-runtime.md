@@ -17,9 +17,9 @@
 
 前台和后台不是"助手 + 她手下的几个外包"，而是**同一个数字人的嘴和手**：
 
-- **用户视角**：只有大肥鱼一个人在做事。她说"好，我来弄""弄好啦"，不说"交给 Claude 了"。用户不需要知道、也不能指定后面是哪个 CLI。
+- **用户视角**：只有鱼丫丫一个人在做事。她说"好，我来弄""弄好啦"，不说"交给 Claude 了"。用户不需要知道、也不能指定后面是哪个 CLI。
 - **模型视角**：实时模型拿到的工具是 `do_task`（"你自己动手"），工具描述、返回值、进展通知里**都不出现后端名字**；通知措辞是"你在做的事做完了"。
-- **后台视角**：后端提示词说明"你是大肥鱼的手，结果由她转述"，并带上**共同记忆**里关于用户的事实（偏好、文件放在哪），所以手的做法和嘴说的一致。
+- **后台视角**：后端提示词说明"你是鱼丫丫的手，结果由她转述"，并带上**共同记忆**里关于用户的事实（偏好、文件放在哪），所以手的做法和嘴说的一致。
 - **谁来干**完全是 Orchestrator 按 `kind` 路由的内部决定；后端名字只出现在 `/api/jobs`、日志这些开发者视图里。
 
 ## 总览
@@ -116,8 +116,9 @@ class AgentBackend:
 | 后端 | 调用 | 提示词传递 | 已验证 |
 |---|---|---|---|
 | Codex | `codex exec --skip-git-repo-check -` | stdin；`--output-last-message {file}` 取干净的最终答复 | ✅ 真的写了文件（16s） |
+| Codex（桌面） | `codex exec --skip-git-repo-check -s danger-full-access -` | stdin；只给 `kind=desktop` 用 | ✅ 列窗口、聚焦、输入、截图（2026-11） |
 | Claude Code | `claude -p --permission-mode acceptEdits --allowedTools Write Bash` | **必须走 stdin** | ✅ 真的写了文件（9s） |
-| OpenCode | `opencode run "<task>"` | 参数 | ⚠ 本机未安装，按其文档设计，未实测 |
+| OpenCode | `opencode run --auto -m opencode/deepseek-v4.1-flash-free "<task>"` | 参数 | ✅ 真的写了文件（57s，免费模型不用登录） |
 
 每个后端在配置里声明权限预设（`readonly` / `workspace-write` / `full`），由适配器翻译成各自的参数（Codex 的 sandbox、Claude 的 `--permission-mode`/`--allowedTools`）。默认 `workspace-write`。
 
@@ -129,11 +130,12 @@ class AgentBackend:
 ```json
 "agents": {
   "default": "codex",
-  "routing": {"desktop": "codex", "code": "claude", "search": "claude"},
+  "routing": {"desktop": "codex-desktop", "code": "claude", "search": "claude"},
   "backends": {
-    "codex":    {"cmd": [...], "permission": "workspace-write", "timeout": 180},
-    "claude":   {"cmd": [...], "permission": "workspace-write", "timeout": 300},
-    "opencode": {"cmd": [...], "permission": "readonly",        "timeout": 300}
+    "codex":         {"cmd": [...], "permission": "workspace-write", "timeout": 300},
+    "codex-desktop": {"cmd": [...], "permission": "full",            "timeout": 300},
+    "claude":        {"cmd": [...], "permission": "workspace-write", "timeout": 300},
+    "opencode":      {"cmd": [...], "permission": "readonly",        "timeout": 300}
   },
   "max_concurrent": 2
 }
@@ -270,19 +272,22 @@ P3 和 P4 是"自成一体"和"自主触发"的核心，彼此独立，可以先
 
 ### 已验证（本机，2026-11）
 
-- 自检（假 CLI 后端，不花 token）：异步、路由回退、排队、取消杀进程、质检重试、追问、接力、确认闸、落盘与 lost、发言闸各分支、工具层、HTTP，全部通过。
-- 真实后端：三个任务 0.1 秒内全部受理；Codex 和 Claude Code 各写出一个文件；点名 `opencode`（未安装）会回退到 Codex，并说明原因。
-- 真实全双工（一体化）：记忆里有"用户的待办记在 state/proof/notes.md"，对她说"帮我把明天下午三点开会加到我的待办里"。她调用 `do_task` 后说"好，我把它写进你的待办文件"（不提任何后端）；后台按 kind=code 路由，靠共同记忆找到了文件；约 20 秒后她**自己开口**："弄好啦，我把明天下午三点开会加进你的待办里了，之前那个文件还没有，我顺手新建好了。"
-- 实测发现模型拿到任务号后会抢先说"弄好了"，已在 `do_task` 返回值和 instructions 里明确"还没做完"，复测不再出现。
-- 没有实时会话时：job 完成后通过退路 TTS 广播"刚才交代的事做完啦"。
+- 自检（假 CLI 后端，不花 token）：异步、路由回退、排队、取消杀进程、质检重试、追问、接力、确认闸、落盘与 lost、发言闸各分支、口头答应兜底、工作目录自动创建、工具层、HTTP，全部通过。
+- HTTP / SSE / TTS / 记忆 / 大脑切换 / 定时提醒 / 危险任务确认：39 项全部通过。
+- 真实后端：17 项全部通过——Codex 与 Claude Code 并行写文件、依赖接力、取消（进程树被杀）、desktop 类任务执行、后端不可用时的回退、没有实时会话时退路 TTS 主动汇报。OpenCode 装上 1.19.5 后用免费模型 `opencode/deepseek-v4.1-flash-free --auto` 实测：57 秒完成一个写文件任务，结果干净（ANSI 控制码已在适配器里剥掉）。
+- 桌面能力：新增 `codex-desktop`（`-s danger-full-access`）并实测——列窗口拿到 ChatGPT/VS Code/Edge 等标题；打开记事本、聚焦、输入 `yuyaya-desktop-ok`、截图确认。
+- 真实全双工（一体化）：记忆里有"用户的待办记在 state/proof/notes.md"，对她说"帮我把明天下午三点开会加到我的待办里"。她调用 `do_task` 后说"好，我把它写进你的待办文件"（不提任何后端）；后台按 kind=code 路由，靠共同记忆找到了文件；任务完成后她**自己开口**："弄好啦，明天下午三点开会已经记进待办里了。"
+- 真实全双工插话：用本机 TTS 合成人声注入麦克风通道，server VAD 判定 `speech_started`、清空字幕、停止旧回答音频并开始新回答。
+- 前端：无头 Edge 实际加载页面，HUD、素材、字幕框、立绘渲染正常（鱼丫丫 / YU·YAYA）；HUD 的 TASK QUEUE 实测能显示活动任务数和最近任务状态；THA3 真实神经网络渲染已跑通（RTX 3060 + CUDA PyTorch 2.3.1，`separable_half` 权重，浏览器实测 21~22fps，THA3 画布接管、WebGL 画布隐藏）；MCP 六个工具和 `tools/yaya.py` 命令行均实测可用；记忆和定时提醒重启后仍在。
+- 实测发现模型拿到任务号后会抢先说"弄好了"，已在 `do_task` 返回值和 instructions 里明确"还没做完"；同一条要求重复出现时还可能只口头答应，服务端已加兜底提醒。
+- 没有实时会话时：job 完成后通过退路 TTS 广播"刚才那件事我弄好啦"。
 
 ### 还没做 / 没实测
 
-1. **HUD 不显示任务**：`job` / `initiative` SSE 事件已经发出，前端还没有画出来。
-2. **OpenCode 没实测**：本机没装，只验证了回退逻辑。
-3. **后台追问依赖 CLI 自觉**：Codex/Claude 的 `-p`/`exec` 都是一次性运行，追问靠最后一行 `NEED_INPUT:` 约定，回答后重新跑一遍（带上历史回答），不是真正的会话续跑。
-4. **前台质检只做了规则**（退出码、空输出、"无法完成"），还没有让前台模型对结果打分后再决定是否重试。
-5. **触发源**只有 job、定时、外部通知、空闲；记忆回访和环境事件（日历、邮件）只留了 `/api/initiative/notify` 插槽。
-6. **说了"我来弄"却没调工具**：同一件事在最近对话里已经做过时，模型可能只口头答应、不再动手。服务端目前没有兜底检查。
-7. **浏览器麦克风插话**（server VAD 打断）只在之前的版本里手测过，这次没有重测。
-8. 已知坑都写进了适配器：`claude -p` 的 `--allowedTools` 会吞后面的参数，提示词必须走 stdin；Windows 上 Codex 是 `.cmd`，用 `shutil.which` 解析；Claude 写文件时路径必须在工作目录内。
+1. **后台追问依赖 CLI 自觉**：Codex/Claude 的 `-p`/`exec` 都是一次性运行，追问靠最后一行 `NEED_INPUT:` 约定，回答后重新跑一遍（带上历史回答），不是真正的会话续跑。
+2. **前台质检只做了规则**（退出码、空输出、"无法完成"），还没有让前台模型对结果打分后再决定是否重试。
+3. **触发源**只有 job、定时、外部通知、空闲；记忆回访和环境事件（日历、邮件）只留了 `/api/initiative/notify` 插槽。
+4. **桌面后端权限很大**：`codex-desktop` 用 `-s danger-full-access`，能不经确认执行任何命令；只应路由给 `desktop` 类任务，普通任务继续走沙箱内的 `codex`。
+5. **真实鼠标点击未实测**：只做了列窗口、聚焦、输入、截图，避免误触用户桌面。
+6. **THA3 只验证了 `separable_half`**：`standard_half` / `standard_float` 的权重没下载，画质与速度没在本机对比；Q 版头身比偏小，放大后比 WebGL 略软。
+7. 已知坑都写进了适配器：`claude -p` 的 `--allowedTools` 会吞后面的参数，提示词必须走 stdin；Windows 上 Codex 是 `.cmd`，用 `shutil.which` 解析；Claude 写文件时路径必须在工作目录内。

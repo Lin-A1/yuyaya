@@ -1,4 +1,4 @@
-"""大肥鱼数字人服务。
+"""鱼丫丫数字人服务。
 
     python -m server            # 默认 http://127.0.0.1:8848
 
@@ -269,7 +269,7 @@ def create_app() -> FastAPI:
     voice_conf = conf.get("voice") or {}
     tts_conf = voice_conf.get("tts") or {}
     security_conf = conf.get("security") or {}
-    app = FastAPI(title="大肥鱼数字人")
+    app = FastAPI(title="鱼丫丫数字人")
 
     def require_local_control(request: Request) -> None:
         if security_conf.get("allow_remote_actions"):

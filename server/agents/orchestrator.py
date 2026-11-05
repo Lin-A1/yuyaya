@@ -63,7 +63,7 @@ def build_prompt(root: pathlib.Path, job: Job, deps: list[Job], retry_note: str 
     answers = ""
     if job.answers:
         answers = "用户已经回答了你之前的提问：\n" + "\n".join(f"- {a}" for a in job.answers) + "\n\n"
-    return f"""你是数字人"大肥鱼"的手：她在和用户说话，你替她在用户电脑上把事做成。
+    return f"""你是数字人"鱼丫丫"的手：她在和用户说话，你替她在用户电脑上把事做成。
 你不直接面对用户，你的结果由她转述，所以不用寒暄，只管把事做对。
 
 任务：
@@ -244,13 +244,20 @@ class Orchestrator:
             facts = list(self.facts() or [])
         except Exception:
             facts = []
+        cwd = self._cwd(job)
+        try:
+            pathlib.Path(cwd).mkdir(parents=True, exist_ok=True)   # 工作目录不存在就建出来
+        except OSError as e:
+            job.error = f"工作目录不可用：{cwd}（{e}）"
+            self._finish(job, "failed")
+            return
         status, text, code = "failed", "", -1
         try:
             while True:
                 job.attempts += 1
                 prompt = build_prompt(self.root, job, deps, retry_note, facts)
                 try:
-                    code, text = backend.run(job, prompt, self._cwd(job), lambda ln: self._emit(job, ln),
+                    code, text = backend.run(job, prompt, cwd, lambda ln: self._emit(job, ln),
                                              backend.timeout)
                 except TimeoutError:
                     status = "timeout"

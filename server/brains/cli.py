@@ -32,7 +32,7 @@ class CLIBrain(Brain):
 
     def build_prompt(self, prompt: str, history: list[dict], context: str = "") -> str:
         # history 已由 app 层按全局 history_turns 截断，这里不再二次截断
-        hist = "".join(f"{'用户' if m['role'] == 'user' else '大肥鱼'}：{m['content']}\n" for m in history)
+        hist = "".join(f"{'用户' if m['role'] == 'user' else '鱼丫丫'}：{m['content']}\n" for m in history)
         if not self.conf.get("persona", True):
             return prompt
         return CLI_WRAPPER.format(persona=self.conf.get("system", PERSONA), history=hist,

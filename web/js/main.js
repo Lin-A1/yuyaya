@@ -166,7 +166,11 @@ function layout(manifest) {
 // ---------------- 事件总线 ----------------
 function connect({ avatar, player, hud, realtime = null }) {
   const es = new EventSource("/api/events");
-  es.onopen = () => hud.set("link", "ONLINE");
+  es.onopen = () => {
+    hud.set("link", "ONLINE");
+    // 刷新后把已有的后台任务补进 HUD
+    fetch("/api/jobs").then((r) => r.json()).then((d) => (d.jobs || []).forEach((j) => hud.job(j))).catch(() => {});
+  };
   es.onerror = () => hud.set("link", "RECONNECTING");
   es.onmessage = (m) => {
     const e = JSON.parse(m.data);
@@ -200,6 +204,9 @@ function connect({ avatar, player, hud, realtime = null }) {
         break;
       case "memory":
         hud.remember(e.text);
+        break;
+      case "job":
+        hud.job(e);
         break;
       case "motion":
         avatar.motion(e.name);
@@ -250,6 +257,7 @@ class Hud {
   constructor(avatar) {
     this.turns = 0;
     this.brainList = [];
+    this.jobMap = new Map();
     this.t0 = Date.now();
     $("#hud-session").textContent = String(Math.floor(1000 + Math.random() * 9000));
     avatar.onChange = ({ emotion, target, state }) => {
@@ -263,6 +271,20 @@ class Hud {
     setInterval(() => this.tick(), 250);
   }
   set(key, val) { const el = $("#hud-" + key); if (el && el.textContent !== val) el.textContent = val; }
+  /** 后台任务：ACTIVE 数 + 最近一条的状态（任务全文放 title） */
+  job(e) {
+    if (!e || !e.id) return;
+    this.jobMap.set(e.id, e);
+    const all = [...this.jobMap.values()];
+    const active = all.filter((j) => ["queued", "running", "needs_input"].includes(j.status));
+    this.set("jobs", String(active.length));
+    const cur = active[0] || all.sort((a, b) => b.id - a.id)[0];
+    if (cur) {
+      this.set("job", "#" + cur.id + " " + (cur.status || "").toUpperCase());
+      const el = $("#hud-job");
+      if (el) el.title = cur.task || "";
+    }
+  }
   /** 记住了一件事：HUD 计数 +1，字幕上方飘一行提示 */
   remember(text) {
     this.facts = (this.facts || 0) + 1;

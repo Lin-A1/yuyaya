@@ -1,4 +1,4 @@
-"""命令行控制大肥鱼（只用标准库，任何脚本 / agent 都能直接调用）。
+"""命令行控制鱼丫丫（只用标准库，任何脚本 / agent 都能直接调用）。
 
     python tools/yaya.py chat "你好呀"                 # 交给当前大脑回复
     python tools/yaya.py chat "写个快排" --brain codex # 指定大脑
@@ -73,7 +73,7 @@ def _game(a):
 def main():
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
-    ap = argparse.ArgumentParser(description="控制大肥鱼数字人")
+    ap = argparse.ArgumentParser(description="控制鱼丫丫数字人")
     sub = ap.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("chat"); p.add_argument("text"); p.add_argument("--brain"); p.add_argument("--no-wait", action="store_true")
     p = sub.add_parser("say"); p.add_argument("text"); p.add_argument("-e", "--emotion")

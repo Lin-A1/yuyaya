@@ -1,9 +1,9 @@
-# 大肥鱼 · 数字生命
+# 鱼丫丫 · 数字生命
 
-> 住在旧工业笔记本屏幕里的 Q 版大肥鱼（DeepSeek 拟人）。
+> 住在旧工业笔记本屏幕里的 Q 版鱼丫丫（DeepSeek 拟人）。
 > 形象和"大脑"解耦——任何 LLM API、agent CLI 或脚本都能驱动她说话、切表情、做动作。
 
-![大肥鱼](docs/screenshot.png)
+![鱼丫丫](docs/screenshot.png)
 
 ## 特性
 
@@ -13,13 +13,14 @@
 - **可插拔大脑**：OpenAI 兼容接口（DeepSeek / 通义 / Kimi / Ollama…）、Claude API、任意命令行 agent，离线 demo 开箱即用。
 - **外部可驱动**：HTTP API + 命令行 + MCP 三套入口，Claude Code、Codex 这类 agent 可以直接把她当"嘴巴"用。
 - **能动手**：让她做事，她说一句"我来弄"就接着陪你聊，做完自己找合适的时机开口汇报。动手的是可插拔的 CLI（Codex / Claude Code / OpenCode…），但对你来说只有她一个人。
+- **任务面板**：HUD 实时显示后台任务数量和最近一条的状态（排队 / 执行中 / 完成 / 失败）。
 - **OBS 友好**：`?obs=1` 就是一块干净的视频源。
 
 ## 角色设定
 
 人设写在 `server/protocol.py` 的 `PERSONA` 里，所有大脑（API 模型、CLI agent、离线 demo、全双工语音）共用同一份：
 
-> 大肥鱼，住在旧电脑屏幕里的 Q 版数字人，深蓝长卷发、鲸鱼尾鳍耳朵、女仆装。
+> 鱼丫丫，住在旧电脑屏幕里的 Q 版数字人，深蓝长卷发、鲸鱼尾鳍耳朵、女仆装。
 > 定位是**日常聊天伙伴兼助理**，不是需要被照顾的小孩，也不是谁的"女儿"。
 > 说话口语化、简短、有点自己的小脾气，但不过分黏人；默认用"你"称呼用户，
 > 不自己起亲昵称呼（不叫"爸爸""主人"）。用户主动说了希望怎么称呼，才用 `[记住:...]` 记下来。
@@ -232,7 +233,7 @@ yaya_remember {"text": "..."}  /  yaya_forget {"text": "..."}
 claude mcp add yuyaya -- python /path/to/yuyaya/tools/mcp_server.py
 ```
 
-提供 `yaya_say` / `yaya_emotion` / `yaya_motion` / `yaya_state` / `yaya_remember` / `yaya_forget` 六个工具。agent 干活时可以让大肥鱼播报进度、用表情表达状态，也可以让她记住用户交代的事。
+提供 `yaya_say` / `yaya_emotion` / `yaya_motion` / `yaya_state` / `yaya_remember` / `yaya_forget` 六个工具。agent 干活时可以让鱼丫丫播报进度、用表情表达状态，也可以让她记住用户交代的事。
 
 ## 形象是怎么动起来的
 
@@ -279,19 +280,22 @@ python tools/tha3_bridge.py --tha3 /path/to/talking-head-anime-3-demo --model se
 
 - 表情、口型、闭眼仍用生成的原画（桥里先把贴片合成到输入图上），THA3 只负责转头 / 点头 / 歪头 / 身体 / 呼吸；蹦跳的位移和压扁由前端用 CSS 叠加。头发、呆毛、耳朵的惯性摆动在这个模式下没有。
 - 模型：`separable_half`（28MB，最快）/ `standard_half`（259MB）/ `standard_float`（518MB，质量最好）。
-- THA3 要求头部约 128px，大肥鱼是 Q 版，整个人在 512 画布里只有约 240×300，显示时会放大，比 WebGL 模式略软。
+- THA3 要求头部约 128px，鱼丫丫是 Q 版，整个人在 512 画布里只有约 240×300，显示时会放大，比 WebGL 模式略软。
 - 姿态到 THA3 参数的映射在 `tha3_bridge.py` 的 `POSE_MAP`，方向不对时改正负号即可。
 - 桥没开或断开时自动退回 WebGL 渲染，每 5 秒重连。`--mock` 不加载模型，只用来联调前端。
 
-RTX 3060 实测（PyTorch 2.3.1 + CUDA 12.1）：
+本机实测（RTX 3060 / PyTorch 2.3.1+cu121 / CUDA 12.1，2026-11）：
 
-| 模型 | 纯推理 | PyTorch 显存峰值 |
-|---|---:|---:|
-| `separable_half` | 22.5ms / 44.5fps | 775MiB |
-| `standard_half` | 30.3ms / 33.0fps | 472MiB |
-| `standard_float` | 44.5ms / 22.5fps | 1094MiB |
+| 环节 | 实测 |
+|---|---|
+| THA3 纯推理（`separable_half`） | 平均 34ms（约 29fps），显存峰值 775MiB |
+| 完整桥接（HTTP + 推理 + RGBA 回传） | 稳定后 36~49ms/帧；首次遇到新表情/口型组合那一帧约 120~135ms |
+| 浏览器 `?render=tha3` | 21~22fps，输出 315×337，每帧约 425KB 未压缩 RGBA |
+| 模型加载 | 约 3.6 秒 |
 
-默认 `separable_half` 走完整桥接链路（HTTP + 推理 + 回传）预热后约 **28fps**，浏览器实测 **27~29fps**，运行中 GPU 总占用约 1.85GiB（含桌面等其它进程）。首次遇到某个表情/口型组合时要合成输入图，之后有缓存。
+- 权重来自 hf-mirror 的 `OktayAlpk/talking-head-anime-3`：五个 `.pt` 放进 `refs/tha3/data/models/separable_half/`。`refs/` 里的源码和权重都不入库。
+- `standard_half`（259MB）/ `standard_float`（518MB）本机没下载，换成对应 `--model` 即可，质量更好、更慢。
+- 联调确认：无头 Edge 加载 `?render=tha3` 后，THA3 画布接管、WebGL 画布自动隐藏，截图里立绘正常，切表情和口型会走不同的输入图。
 
 桥上必须开启 `cudnn.benchmark`，并且只在加载模型的主线程里推理：让每个 HTTP 连接线程直接跑 CUDA 会慢几十倍。
 
@@ -388,11 +392,12 @@ curl -XPOST localhost:8848/api/input -d '{"type":"speech_start"}'
 ```json
 "agents": {
   "enabled": true, "default": "codex", "max_concurrent": 2, "max_refine": 1,
-  "routing": {"desktop": "codex", "code": "claude", "search": "claude"},
+  "routing": {"desktop": "codex-desktop", "code": "claude", "search": "claude"},
   "backends": {
-    "codex":    {"cmd": ["codex", "exec", "--skip-git-repo-check", "--output-last-message", "{outfile}", "-"], "timeout": 180},
+    "codex":    {"cmd": ["codex", "exec", "--skip-git-repo-check", "--output-last-message", "{outfile}", "-"], "timeout": 300},
+    "codex-desktop": {"cmd": ["codex", "exec", "--skip-git-repo-check", "-s", "danger-full-access", "--output-last-message", "{outfile}", "-"], "timeout": 300},
     "claude":   {"cmd": ["claude", "-p", "--permission-mode", "acceptEdits", "--allowedTools", "Write", "Edit", "Read", "Bash", "Glob", "Grep", "WebSearch", "WebFetch"], "timeout": 300},
-    "opencode": {"cmd": ["opencode", "run", "{prompt}"], "timeout": 300}
+    "opencode": {"cmd": ["opencode", "run", "--auto", "-m", "opencode/deepseek-v4.1-flash-free", "{prompt}"], "timeout": 300}
   }
 },
 "initiative": {"enabled": true, "cooldown": 90, "hourly_cap": 6, "quiet_minutes": 30, "idle_chat_seconds": 0}
@@ -400,7 +405,9 @@ curl -XPOST localhost:8848/api/input -d '{"type":"speech_start"}'
 
 - 提示词默认走 stdin；命令里写了 `{prompt}` 就改为作为参数传入；`{outfile}` 会换成一个临时文件，给 `--output-last-message` 这类"把最终答复写进文件"的参数用。
 - 加一个后端 = 在 `backends` 里加一行命令；需要特殊处理时继承 `server/agents/backends.py` 的 `AgentBackend` 并 `register_backend`。
+- **OpenCode**：`npm i -g opencode-ai` 装好后用免费模型 `opencode/deepseek-v4.1-flash-free`，不需要登录；`--auto` 自动批准工具权限。本机实测 57 秒真的写出了文件。它的输出带 ANSI 控制码，适配器会自动剥掉。
 - 不写 `agents.backends` 时，沿用旧的 `actions.cmd` 作为唯一的 `codex` 后端。
+- 桌面类任务（`kind=desktop`）需要后端能访问你的桌面。Codex 默认沙箱下列窗口是空的，所以内置了一个只给桌面任务用的 `codex-desktop` 后端，带 `-s danger-full-access`（解除沙箱，权限很大，风险自担；普通写代码/查资料仍走沙箱内的 `codex`）。
 - `idle_chat_seconds` 大于 0 时，你安静这么久之后她可能主动搭一句话（默认关）。
 
 ```bash

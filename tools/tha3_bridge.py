@@ -1,4 +1,4 @@
-"""THA3 渲染桥（可选）：用 talking-head-anime-3 在 GPU 上实时渲染大肥鱼，前端 ?render=tha3 时使用。
+"""THA3 渲染桥（可选）：用 talking-head-anime-3 在 GPU 上实时渲染鱼丫丫，前端 ?render=tha3 时使用。
 
     # 在装了 CUDA PyTorch 的环境里运行；--tha3 指向 talking-head-anime-3-demo 源码目录（含 data/models）
     python tools/tha3_bridge.py --tha3 ~/yuyaya-lab/talking-head-anime-3-demo-main

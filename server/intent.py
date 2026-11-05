@@ -18,7 +18,7 @@ _QUESTION_PREFIX = re.compile(
     r"^(?:怎么|怎样|如何|为什么|为啥|什么是|什么是|能不能教|可以教|会不会|是否)"
 )
 _EXPLAIN = re.compile(r"(?:是什么意思|什么意思|怎么用|如何使用|为什么|原理)")
-_LEADING = re.compile(r"^(?:大肥鱼|肥鱼|鱼鱼|爸爸|喂)[，,、:：\s]*")
+_LEADING = re.compile(r"^(?:鱼丫丫|丫丫|大肥鱼|肥鱼|鱼鱼|爸爸|喂)[，,、:：\s]*")
 _IMPERATIVE = re.compile(rf"^(?:{_POLITE}[，,\s]*)?{_ACTION}")
 _REQUEST = re.compile(rf"{_POLITE}.{{0,12}}?{_ACTION}|(?:去|快|立刻|马上).{{0,6}}?{_ACTION}")
 

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>大肥鱼 · 数字生命</title>
+<title>鱼丫丫 · 数字生命</title>
 <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
@@ -28,7 +28,7 @@
       <div class="hud-left">
         <section>
           <h6>DIGITAL LIFE SESSION</h6>
-          <div class="row"><span>SUBJECT</span><b>DA·FEIYU</b></div>
+          <div class="row"><span>SUBJECT</span><b>YU·YAYA</b></div>
           <div class="row"><span>SESSION</span><b id="hud-session">0001</b></div>
         </section>
         <section>
@@ -48,6 +48,10 @@
           <div class="row"><span>TURNS</span><b id="hud-turns">0</b></div>
           <div class="row"><span>FACTS</span><b id="hud-facts">0</b></div>
           <div class="row"><span>LINK</span><b id="hud-link">OFFLINE</b></div>
+        </section>
+        <section>
+          <h6>TASK QUEUE</h6>
+          <div class="row"><span>TASKS</span><b><span id="hud-jobs">0</span> · <span id="hud-job">—</span></b></div>
         </section>
       </div>
 
@@ -79,7 +83,7 @@
 
 <form id="console" autocomplete="off">
   <select id="brain-select" title="切换大脑"></select>
-  <input id="input" placeholder="对大肥鱼说点什么…（Enter 发送，Esc 打断）" maxlength="2000">
+  <input id="input" placeholder="对鱼丫丫说点什么…（Enter 发送，Esc 打断）" maxlength="2000">
   <button type="button" id="mic-btn" title="开启连续语音对话" aria-pressed="false">语音</button>
   <button type="submit">发送</button>
 </form>
