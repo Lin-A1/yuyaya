@@ -216,7 +216,9 @@ class Initiative:
         sp = self.speaker if (self.speaker is not None and self.speaker.has_session()) else None
         try:
             if sp is not None:
-                spoke = bool(sp.speak(text))
+                # 汇报类通知留一小段停顿，像在听完之后才开口，而不是抢话
+                grace = 0.8 if batch[0].kind in ("job", "schedule") else 0.0
+                spoke = bool(sp.speak(text, grace))
             elif self.fallback_say:
                 fb = "；".join(dict.fromkeys(p.fallback for p in batch if p.fallback))   # 去重
                 if fb:

@@ -38,6 +38,8 @@ const MOTIONS = {
     const a = smooth(0, 0.3, t) * (1 - smooth(0.3, 0.5, t)), b = smooth(0.3, 0.5, t) * (1 - smooth(0.6, 1, t));
     o.dy += -5 * a + 6 * b; o.pitch += -0.2 * a + 0.35 * b; o.sq += -0.015 * a + 0.012 * b; o.ear += 0.05 * a - 0.12 * b;
   } },
+  // 凑近：身体前倾、头低一点，像在认真听或者想看清楚
+  lean:    { dur: 1.4,  f: (t, o) => { const e = bump(t, 0.15, 0.75); o.pitch += 0.28 * e; o.dy += 6 * e; o.sq += 0.012 * e; o.ear += 0.12 * e; } },
 };
 
 /** 起跳：蹲（压扁）→ 腾空 → 落地再压一下。 */

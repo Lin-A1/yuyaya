@@ -33,6 +33,24 @@ POSE_MAP = [
     ("breathing", "breath", 1.0),
 ]
 
+# 表情 → THA3 的面部参数。原画只提供"表情贴图"，但 THA3 还能动眉毛/眼睛/嘴角，
+# 叠上去之后同一张脸会有更多层次（不只是换图）。
+EMO_FACE = {
+    "neutral":   {},
+    "happy":     {"eyebrow_happy": 0.55, "eye_happy_wink": 0.15, "mouth_raised_corner": 0.5},
+    "sad":       {"eyebrow_troubled": 0.6, "eye_relaxed": 0.25, "mouth_lowered_corner": 0.55},
+    "surprised": {"eyebrow_raised": 0.8, "eye_surprised": 0.7, "iris_small": 0.5, "mouth_ooo": 0.45},
+    "thinking":  {"eyebrow_lowered": 0.35, "eye_unimpressed": 0.2, "mouth_delta": 0.2},
+    "shy":       {"eyebrow_troubled": 0.3, "eye_relaxed": 0.35, "mouth_smirk": 0.3},
+    "angry":     {"eyebrow_angry": 0.75, "eye_raised_lower_eyelid": 0.4,
+                  "mouth_lowered_corner": 0.4},
+}
+
+
+def _spread(value: float, arity: int) -> float:
+    """arity=2 的参数（眉毛/眼睛）左右各一份；负数时左右相反（歪嘴、单挑眉）。"""
+    return value
+
 
 class Inputs:
     """合成并缓存 THA3 的输入图：(表情, 口型级别, 是否闭眼) → 512x512 RGBA。"""
@@ -88,7 +106,12 @@ class Tha3Renderer:
         self.dtype = self.poser.get_dtype()
         names = [n for g in self.poser.get_pose_parameter_groups() for n in g.get_parameter_names()]
         self.n = len(names)
-        self.index = {k: [i for i, n in enumerate(names) if n == k] for k, _, _ in POSE_MAP}
+        wanted = {k for k, _, _ in POSE_MAP} | {k for d in EMO_FACE.values() for k in d}
+        wanted |= {"mouth_aaa", "iris_rotation_x", "iris_rotation_y"}
+        # 左右成对的参数名带 _left / _right 后缀，按前缀匹配
+        self.index = {k: [i for i, n in enumerate(names)
+                          if n == k or n.startswith(k + "_")] for k in wanted}
+        self.missing = sorted(k for k, v in self.index.items() if not v)
         self.tensors = {}
         self.render({"emo": "neutral"})   # 预热：第一次推理要编译 CUDA kernel
 
@@ -106,11 +129,28 @@ class Tha3Renderer:
     def render(self, p: dict) -> bytes:
         torch = self.torch
         pose = torch.zeros(1, self.n, device=self.dev, dtype=self.dtype)
+
+        def put(name: str, v: float) -> None:
+            for i in self.index.get(name, []):
+                pose[0, i] = max(-1.0, min(1.0, float(v)))
+
         for name, field, k in POSE_MAP:
-            v = max(-1.0, min(1.0, float(p.get(field, 0)) * k))
-            for i in self.index[name]:
-                pose[0, i] = v
-        key = (p.get("emo", "neutral"), int(p.get("mouth", 0)), bool(p.get("blink")))
+            put(name, p.get(field, 0) * k)
+
+        # 表情细节：眉毛 / 眼睛 / 嘴角。用表情名的固定映射，不会跟原画的表情底图打架。
+        emo = p.get("emo", "neutral")
+        for name, v in EMO_FACE.get(emo, {}).items():
+            put(name, v * _spread(1.0, len(self.index.get(name, []))))
+        # 说话时嘴角微动，让口型不是纯贴图
+        mouth = int(p.get("mouth", 0))
+        if mouth:
+            put("mouth_aaa", 0.35 + 0.12 * mouth)
+        # 眼神：跟着 yaw 稍微转一点，视线更"活"
+        yaw = float(p.get("yaw", 0))
+        put("iris_rotation_x", max(-1.0, min(1.0, yaw * 1.6)))
+        put("iris_rotation_y", max(-1.0, min(1.0, -float(p.get("pitch", 0)) * 1.2)))
+
+        key = (emo, mouth, bool(p.get("blink")))
         x0, y0, x1, y1 = self.inputs.crop
         with torch.no_grad():
             o = self.poser.pose(self._tensor(key), pose)[0, :, y0:y1, x0:x1].float()

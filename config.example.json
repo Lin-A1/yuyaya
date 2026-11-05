@@ -1,86 +1,77 @@
 {
-  "default": "demo",
+  "version": 3,
+  "mode": "half",
   "history_turns": 12,
-  "brains": {
-    "demo": {
-      "type": "demo",
-      "label": "演示（离线）"
+  "voice": {
+    "full": {
+      "provider": "qwen",
+      "model": "qwen-audio-3.1-realtime-flash",
+      "api_key_env": "DASHSCOPE_API_KEY",
+      "voice": "qiaoxiaojiao_v3.1",
+      "vad_threshold": 0.5,
+      "silence_duration_ms": 500,
+      "tools": true
     },
-    "deepseek": {
-      "type": "openai",
-      "label": "DeepSeek",
-      "base_url": "https://api.deepseek.com",
-      "model": "deepseek-chat",
-      "api_key_env": "DEEPSEEK_API_KEY"
-    },
-    "qwen": {
-      "type": "openai",
-      "label": "通义千问",
-      "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-      "model": "qwen-plus",
-      "api_key_env": "DASHSCOPE_API_KEY"
-    },
-    "ollama": {
-      "type": "openai",
-      "label": "Ollama 本地",
-      "base_url": "http://127.0.0.1:11434/v1",
-      "model": "qwen2.5:7b"
-    },
-    "claude": {
-      "type": "anthropic",
-      "label": "Claude API",
-      "model": "claude-opus-5-5",
-      "effort": "low",
-      "api_key_env": "ANTHROPIC_API_KEY"
-    },
-    "claude-code": {
-      "type": "cli",
-      "label": "Claude Code CLI",
-      "cmd": [
-        "claude",
-        "-p"
-      ],
-      "stdin": true,
-      "timeout": 300
-    },
-    "codex": {
-      "type": "cli",
-      "label": "Codex CLI",
-      "cmd": [
-        "codex",
-        "exec",
-        "--skip-git-repo-check",
-        "--output-last-message",
-        "{outfile}",
-        "-"
-      ],
-      "stdin": true,
-      "timeout": 300
+    "half": {
+      "llm": {
+        "type": "demo",
+        "base_url": "",
+        "model": "",
+        "api_key_env": "",
+        "preset": "demo"
+      },
+      "tts": {
+        "provider": "qwen-realtime",
+        "voice": "qiaoxiaojiao_v3.1",
+        "base_url": "",
+        "api_key_env": "",
+        "rate": 0,
+        "volume": 100
+      },
+      "asr": {
+        "provider": "qwen",
+        "model": "qwen3-asr-flash"
+      }
     }
   },
-  "actions": {
+  "agents": {
     "enabled": true,
-    "cmd": [
-      "codex",
-      "exec",
-      "--skip-git-repo-check",
-      "-"
-    ],
-    "cwd": "",
-    "ack": "好，我去弄一下！",
-    "timeout": 180
+    "mode": "auto",
+    "active": "",
+    "max_concurrent": 2,
+    "max_refine": 1,
+    "cli": {
+      "claude": {
+        "enabled": true,
+        "model": ""
+      },
+      "codex": {
+        "enabled": true,
+        "model": ""
+      },
+      "opencode": {
+        "enabled": true,
+        "model": "opencode/deepseek-v4.1-flash-free"
+      }
+    },
+    "routing": {
+      "desktop": "codex-desktop",
+      "code": "claude",
+      "search": "claude"
+    },
+    "desktop": {
+      "enabled": true
+    }
+  },
+  "initiative": {
+    "enabled": true,
+    "cooldown": 90,
+    "hourly_cap": 6,
+    "quiet_minutes": 30,
+    "idle_chat_seconds": 0
   },
   "security": {
     "allow_remote_actions": false
-  },
-  "voice": {
-    "tts": {
-      "enabled": true,
-      "provider": "sapi",
-      "voice": "Microsoft Huihui Desktop",
-      "rate": 0,
-      "volume": 100
-    }
   },
   "io": {
     "inputs": [
@@ -100,94 +91,5 @@
         "type": "action_log"
       }
     ]
-  },
-  "realtime": {
-    "enabled": false,
-    "provider": "qwen",
-    "model": "qwen-audio-3.1-realtime-flash",
-    "api_key_env": "DASHSCOPE_API_KEY",
-    "voice": "qiaoxiaojiao_v3.1",
-    "input_sample_rate": 16000,
-    "output_sample_rate": 24000,
-    "vad_threshold": 0.5,
-    "silence_duration_ms": 500,
-    "tools": true
-  },
-  "agents": {
-    "enabled": true,
-    "default": "codex",
-    "max_concurrent": 2,
-    "max_refine": 1,
-    "routing": {
-      "desktop": "codex-desktop",
-      "code": "claude",
-      "search": "claude"
-    },
-    "backends": {
-      "codex": {
-        "type": "cli",
-        "cmd": [
-          "codex",
-          "exec",
-          "--skip-git-repo-check",
-          "--output-last-message",
-          "{outfile}",
-          "-"
-        ],
-        "timeout": 300
-      },
-      "claude": {
-        "type": "cli",
-        "cmd": [
-          "claude",
-          "-p",
-          "--permission-mode",
-          "acceptEdits",
-          "--allowedTools",
-          "Write",
-          "Edit",
-          "Read",
-          "Bash",
-          "Glob",
-          "Grep",
-          "WebSearch",
-          "WebFetch"
-        ],
-        "timeout": 300
-      },
-      "opencode": {
-        "type": "cli",
-        "enabled": true,
-        "cmd": [
-          "opencode",
-          "run",
-          "--auto",
-          "-m",
-          "opencode/deepseek-v4.1-flash-free",
-          "{prompt}"
-        ],
-        "timeout": 300
-      },
-      "codex-desktop": {
-        "cmd": [
-          "codex",
-          "exec",
-          "--skip-git-repo-check",
-          "-s",
-          "danger-full-access",
-          "--output-last-message",
-          "{outfile}",
-          "-"
-        ],
-        "timeout": 300
-      }
-    }
-  },
-  "initiative": {
-    "enabled": true,
-    "cooldown": 90,
-    "hourly_cap": 6,
-    "quiet_minutes": 30,
-    "idle_chat_seconds": 0
   }
 }

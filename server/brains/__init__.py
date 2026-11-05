@@ -39,14 +39,15 @@ class Brain:
         kind = c.get("type", self.kind)
         if kind == "demo":
             return True, ""
-        if kind in ("openai", "anthropic"):
+        if kind in ("openai", "anthropic", "gemini"):
             if kind == "anthropic":
                 import importlib.util
                 if importlib.util.find_spec("anthropic") is None:
                     return False, "需要 pip install anthropic"
             if c.get("api_key"):
                 return True, ""
-            env = c.get("api_key_env") or ("ANTHROPIC_API_KEY" if kind == "anthropic" else "")
+            env = c.get("api_key_env") or ("ANTHROPIC_API_KEY" if kind == "anthropic"
+                                           else "GEMINI_API_KEY" if kind == "gemini" else "")
             if env:
                 if os.environ.get(env):
                     return True, ""
@@ -94,11 +95,12 @@ class Brain:
 def build_brain(name: str, conf: dict) -> Brain:
     from .openai_compat import OpenAICompatBrain
     from .anthropic_api import AnthropicBrain
+    from .gemini import GeminiBrain
     from .cli import CLIBrain
     from .demo import DemoBrain
 
     kinds = {"openai": OpenAICompatBrain, "anthropic": AnthropicBrain,
-             "cli": CLIBrain, "demo": DemoBrain}
+             "gemini": GeminiBrain, "cli": CLIBrain, "demo": DemoBrain}
     kind = conf.get("type", "demo")
     if kind not in kinds:
         raise ValueError(f"brain {name}: unknown type {kind!r}, expected one of {list(kinds)}")

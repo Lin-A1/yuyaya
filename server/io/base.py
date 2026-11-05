@@ -66,6 +66,7 @@ class OutputAdapter:
 
 class TTSProvider:
     type = "tts"
+    mime = "audio/wav"          # synth_wav 返回的字节实际是什么容器（Edge 是 MP3）
 
     def __init__(self, conf: dict | None = None):
         self.conf = conf or {}

@@ -10,6 +10,8 @@ const api = (path, body) => fetch(path, {
 }).then((r) => r.json());
 
 async function main() {
+  // 设置按钮先挂上：后面几个 await 期间点它也要有反应
+  setupSettings();
   const manifest = await fetch("assets/manifest.json").then((r) => r.json());
   const stage = $("#stage");
   const s = manifest.scene.screen;
@@ -34,10 +36,13 @@ async function main() {
   const voice = await createVoice(avatar, params);
   const player = new SpeechPlayer({ avatar, subtitle: $("#subtitle"), voice });
   player.base = { sub: $("#subtitle"), voice };   // 全双工开着时临时换掉，关了再还原
+  window.__voice = voice;                         // 设置面板改音色时直接改它
   const hud = new Hud(avatar);
   connect({ avatar, player, hud, realtime });
-  const voiceChat = setupVoice({ avatar, player, realtime });
+  const asr = await createASR(params);
+  const voiceChat = setupVoice({ avatar, player, realtime, asr });
   setupConsole({ avatar, player, voiceChat, realtime });
+  SettingsPanel.player = player;      // 设置里换了音色后让朗读立刻用上
 }
 
 async function createVoice(avatar, params) {
@@ -69,7 +74,34 @@ async function createRealtime(avatar, params) {
   }
 }
 
-function setupVoice({ avatar, player, realtime = null }) {
+/** 半双工的麦克风：按配置的 ASR 决定用服务端转写还是浏览器自带识别。 */
+async function createASR(params) {
+  if (params.get("asr") === "0") return null;
+  let cfg = {};
+  try {
+    cfg = await fetch("/api/voice/config").then((r) => r.json());
+  } catch (e) {
+    console.warn("[asr]", e.message);
+  }
+  const asr = cfg.asr || {};
+  const base = {
+    onSpeechStart: () => {},
+    onText: () => {},
+    onState: () => {},
+  };
+  if (asr.enabled && asr.provider && asr.provider !== "browser") {
+    const s = new ServerASRSession(base);
+    s.provider = asr.provider;
+    if (s.supported) return s;
+    console.warn("[asr] 服务端识别需要 MediaRecorder，退回浏览器识别");
+  }
+  if (asr.provider === "none" || asr.enabled === false) return null;
+  const s = new VoiceSession(base);
+  s.provider = "browser";
+  return s;
+}
+
+function setupVoice({ avatar, player, realtime = null, asr = null }) {
   const btn = $("#mic-btn");
   if (!btn) return null;
   if (realtime) {
@@ -106,41 +138,51 @@ function setupVoice({ avatar, player, realtime = null }) {
     addEventListener("beforeunload", () => realtime.stop());
     return realtime;
   }
-  const labels = { off: "语音", listening: "聆听中", speech: "在听", heard: "处理中", denied: "无权限" };
-  const session = new VoiceSession({
-    onSpeechStart: () => {
-      // 一开口：本地先停字幕/TTS，再告诉服务端取消大脑请求
-      player.interrupt();
-      avatar.setState("listening");
-      api("/api/input", { type: "speech_start" }).catch(() => {});
-    },
-    onText: (text) => {
-      showUserLine(text);
-      api("/api/input", { type: "speech_final", text, wait: false }).catch(() => {});
-    },
-    onState: (state) => {
-      const on = state === "listening" || state === "speech" || state === "heard";
-      btn.textContent = labels[state] || "语音";
-      btn.setAttribute("aria-pressed", String(on));
-      btn.dataset.state = state;
-    },
-  });
-  if (!session.supported) {
+  // 半双工：麦克风按配置的 ASR 来；没配 ASR 就禁用按钮、提示去设置里开
+  if (!asr) {
     btn.disabled = true;
-    btn.title = "当前浏览器不支持语音识别";
-    return session;
+    btn.textContent = "语音";
+    btn.title = "没有启用语音识别，去「设置」里选一个，或直接在下面打字";
+    return null;
   }
+  const labels = { off: "语音", listening: "聆听中", speech: "在听", heard: "处理中",
+                   denied: "无权限", error: "识别失败" };
+  asr.onSpeechStart = () => {
+    // 一开口：本地先停字幕/TTS，再告诉服务端取消大脑请求
+    player.interrupt();
+    avatar.setState("listening");
+    api("/api/input", { type: "speech_start" }).catch(() => {});
+  };
+  asr.onText = (text) => {
+    showUserLine(text);
+    api("/api/input", { type: "speech_final", text, wait: false }).catch(() => {});
+  };
+  asr.onState = (state) => {
+    const on = state === "listening" || state === "speech" || state === "heard";
+    btn.textContent = labels[state] || "语音";
+    btn.setAttribute("aria-pressed", String(on));
+    btn.dataset.state = state;
+  };
+  if (!asr.supported) {
+    btn.disabled = true;
+    btn.title = asr.provider === "qwen"
+      ? "服务端识别需要浏览器支持录音（MediaRecorder）"
+      : "当前浏览器不支持语音识别，去「设置」里改用服务端识别";
+    return asr;
+  }
+  btn.title = asr.provider === "qwen" ? `语音输入（${asr.provider} 服务端识别）`
+                                      : "语音输入（浏览器识别）";
   btn.addEventListener("click", async () => {
     try {
-      if (session.active) session.stop();
-      else await session.start();
+      if (asr.active) asr.stop();
+      else await asr.start();
     } catch (e) {
       btn.title = e.message;
       btn.dataset.state = "denied";
     }
   });
-  addEventListener("beforeunload", () => session.stop());
-  return session;
+  addEventListener("beforeunload", () => asr.stop());
+  return asr;
 }
 
 /** 让立绘"坐"在桌子后面：立绘下沿藏到桌面上沿以下一点点。 */
@@ -183,6 +225,7 @@ function connect({ avatar, player, hud, realtime = null }) {
         hud.set("facts", String(e.facts || 0));   // 刷新后恢复记忆条数
         break;
       case "brain":
+      case "brains":
         hud.brains(e);
         break;
       case "user":
@@ -335,7 +378,7 @@ function setupConsole({ voiceChat = null, realtime = null } = {}) {
   sel.addEventListener("change", () => api("/api/brain", { name: sel.value }));
 
   const EMO_KEYS = ["neutral", "happy", "sad", "surprised", "thinking", "shy", "angry"];
-  const MOTION_KEYS = { n: "nod", s: "shake", h: "hop", j: "jump", d: "droop", t: "tremble", g: "tilt", w: "wiggle", f: "sniff", x: "sigh" };
+  const MOTION_KEYS = { n: "nod", s: "shake", h: "hop", j: "jump", d: "droop", t: "tremble", g: "tilt", w: "wiggle", f: "sniff", x: "sigh", r: "startle", l: "lean" };
   document.addEventListener("keydown", (ev) => {
     if (ev.key === "Escape") { realtime?.cancel(); api("/api/interrupt", {}); input.blur(); return; }
     if (document.activeElement === input) return;

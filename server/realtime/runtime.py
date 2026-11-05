@@ -17,6 +17,7 @@ import json
 import logging
 import os
 import re
+import time
 
 import aiohttp
 
@@ -131,6 +132,7 @@ class _Bridge:
 
         elif etype == "input_audio_buffer.speech_started":
             self.user_speaking = True
+            self.last_activity = time.time()
             rt.touch()
             await self._barge_in(send_cancel=True)
             self.caption_raw = ""
@@ -140,6 +142,7 @@ class _Bridge:
 
         elif etype == "input_audio_buffer.speech_stopped":
             self.user_speaking = False
+            self.last_activity = time.time()      # 别人刚说完，汇报要等一小会儿再插
             hub.publish({"type": "state", "state": "thinking"})
 
         elif etype == "conversation.item.input_audio_transcription.completed":
@@ -316,13 +319,21 @@ class _Bridge:
         self.turn = None
         self.sp = SpeechStream()
 
-    def idle(self) -> bool:
-        """现在能不能插话：用户没在说话、模型没在回答、没有待交回的工具结果。"""
-        return not (self.user_speaking or self.response_active or self.pending_outputs)
+    def idle(self, grace: float = 0.0) -> bool:
+        """现在能不能插话：用户没在说话、模型没在回答、没有待交回的工具结果。
 
-    async def inject(self, text: str) -> bool:
+        ``grace`` 是"刚安静下来还要再等一会儿"：用户话音刚落时立刻汇报会显得抢话，
+        等一小段更像在认真听完。
+        """
+        if self.user_speaking or self.response_active or self.pending_outputs:
+            return False
+        if grace and self.last_activity and time.time() - self.last_activity < grace:
+            return False
+        return True
+
+    async def inject(self, text: str, grace: float = 0.0) -> bool:
         """把一条系统通知交给模型，让它自己决定怎么说（也可以什么都不说）。"""
-        if not self.idle():
+        if not self.idle(grace):
             return False
         ok = await self._safe_send({
             "type": "conversation.item.create",
@@ -366,11 +377,11 @@ class _Speaker:
         b = self._bridge()
         return b is not None and b.idle()
 
-    def speak(self, text: str) -> bool:
+    def speak(self, text: str, grace: float = 0.0) -> bool:
         b = self._bridge()
         if b is None:
             return False
-        fut = asyncio.run_coroutine_threadsafe(b.inject(text), b.loop)
+        fut = asyncio.run_coroutine_threadsafe(b.inject(text, grace), b.loop)
         try:
             return bool(fut.result(timeout=5))
         except Exception:
@@ -426,7 +437,12 @@ class RealtimeRuntime:
 
     @property
     def available(self) -> bool:
-        return bool(self.enabled and self.api_key)
+        return bool(self.enabled and self.key)
+
+    @property
+    def key(self) -> str:
+        """每次现读环境变量：页面上刚填的 key 不用重启就能用。"""
+        return os.environ.get(self.api_key_env, "")
 
     def info(self) -> dict:
         return {
@@ -505,7 +521,7 @@ class RealtimeRuntime:
             timeout = aiohttp.ClientTimeout(total=None, sock_connect=15)
             async with aiohttp.ClientSession(timeout=timeout) as sess:
                 async with sess.ws_connect(
-                        self.url, headers={"Authorization": f"Bearer {self.api_key}"},
+                        self.url, headers={"Authorization": f"Bearer {self.key}"},
                         heartbeat=20, max_msg_size=0) as up:
                     await up.send_json(self.session_update())
                     bridge = _Bridge(self, ws, up)

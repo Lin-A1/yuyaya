@@ -192,7 +192,141 @@ body {
   #console input { grid-column: 1; }
   #console #mic-btn { grid-column: 2; }
   #console button[type="submit"] { grid-column: 3; }
+  #console #cfg-btn { grid-column: 3; }
   #console input, #console select, #console button { min-height: 44px; }
 }
 body.obs #console { display: none; }
 body.obs { background: transparent; }
+
+/* ---------- 设置面板 ---------- */
+#settings {
+  position: fixed; inset: 0; z-index: 40;
+  display: grid; place-items: center;
+  background: rgba(4, 7, 6, .62); backdrop-filter: blur(3px);
+}
+#settings[hidden] { display: none; }
+.cfg-card {
+  width: min(600px, 94vw); max-height: 88vh; display: flex; flex-direction: column;
+  padding: 18px 20px 0; border-radius: 14px;
+  background: rgba(16, 21, 19, .97); border: 1px solid rgba(255, 255, 255, .16);
+  color: #e8ece9; font-size: 13px; line-height: 1.6;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, .55);
+}
+.cfg-card header { display: flex; align-items: center; margin-bottom: 10px; }
+.cfg-card h3 { font-size: 15px; font-weight: 600; letter-spacing: .08em; flex: 1; }
+.cfg-close {
+  font: inherit; font-size: 20px; line-height: 1; padding: 2px 8px; cursor: pointer;
+  color: #c9d2ce; background: transparent; border: 0; border-radius: 6px;
+}
+.cfg-close:hover { background: rgba(255, 255, 255, .1); }
+
+/* 页签 */
+.cfg-tabs { display: flex; gap: 4px; margin-bottom: 4px; border-bottom: 1px solid rgba(255, 255, 255, .12); }
+.cfg-tabs button {
+  font: inherit; font-size: 12.5px; cursor: pointer; padding: 8px 14px;
+  color: #9fb0aa; background: transparent; border: 0; border-bottom: 2px solid transparent;
+  border-radius: 6px 6px 0 0;
+}
+.cfg-tabs button:hover { color: #d8e4df; background: rgba(255, 255, 255, .05); }
+.cfg-tabs button.on { color: #a8f0c6; border-bottom-color: #7fe1b2; background: rgba(127, 225, 178, .08); }
+
+.cfg-page { overflow-y: auto; padding: 14px 2px 12px; flex: 1; min-height: 190px; }
+.cfg-page[hidden] { display: none; }
+.cfg-lead { font-size: 12px; opacity: .66; margin-bottom: 14px; line-height: 1.7; }
+/* 单选卡片（模式 / agent 用几个） */
+.cfg-modes { display: grid; gap: 8px; margin: 4px 0 10px; }
+.cfg-modes--sm { grid-template-columns: 1fr 1fr; }
+.cfg-choice {
+  display: flex; flex-direction: column; gap: 2px; cursor: pointer;
+  padding: 10px 12px; border-radius: 9px;
+  background: rgba(255, 255, 255, .04); border: 1px solid rgba(255, 255, 255, .12);
+  transition: border-color .15s, background .15s;
+}
+.cfg-choice:hover { background: rgba(255, 255, 255, .07); }
+.cfg-choice.on { border-color: rgba(127, 225, 178, .75); background: rgba(127, 225, 178, .1); }
+.cfg-choice input { position: absolute; opacity: 0; pointer-events: none; }
+.cfg-choice b { font-weight: 600; font-size: 13px; }
+.cfg-choice.on b { color: #a8f0c6; }
+.cfg-choice small { opacity: .6; font-size: 11.5px; }
+
+.cfg-card h4 {
+  font-size: 11px; letter-spacing: .16em; opacity: .62; font-weight: 600;
+  margin: 16px 0 6px; padding-top: 12px; border-top: 1px solid rgba(255, 255, 255, .08);
+}
+.cfg-card h4:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
+
+.cfg-row { display: flex; align-items: center; gap: 10px; margin: 7px 0; }
+.cfg-row > span { width: 88px; flex: none; opacity: .8; }
+.cfg-row--sub { margin-left: 26px; }
+.cfg-row--sub > span { width: 62px; font-size: 12px; }
+.cfg-row select, .cfg-row input {
+  flex: 1; min-width: 0; font: inherit; font-size: 13px; color: #e8ece9;
+  background: rgba(255, 255, 255, .07); border: 1px solid rgba(255, 255, 255, .16);
+  border-radius: 7px; padding: 7px 9px; outline: none;
+}
+.cfg-row select option { color: #16191a; background: #fff; }
+.cfg-row input:focus, .cfg-row select:focus { border-color: rgba(168, 240, 198, .6); }
+.cfg-note { display: block; font-size: 11px; opacity: .55; margin: 2px 0 0 98px; }
+
+/* 开关 */
+.cfg-switch {
+  display: flex; align-items: center; gap: 10px; margin: 8px 0;
+  cursor: pointer; user-select: none;
+}
+.cfg-switch input { width: 16px; height: 16px; accent-color: #7fe1b2; flex: none; }
+.cfg-switch > span { font-weight: 500; }
+.cfg-switch > small { opacity: .55; font-size: 11.5px; margin-left: auto; text-align: right; }
+.cfg-switch--sub { margin-left: 26px; margin-top: 14px; }
+.cfg-switch--sub > small { max-width: 62%; }
+
+/* CLI 卡片 */
+.cfg-cli {
+  margin: 10px 0; padding: 8px 12px 10px; border-radius: 9px;
+  background: rgba(255, 255, 255, .035); border: 1px solid rgba(255, 255, 255, .09);
+}
+.cfg-cli.off { opacity: .5; }
+.cfg-cli .cfg-switch { margin: 0 0 4px; }
+.cfg-cli .cfg-switch > small { opacity: .5; font-size: 11px; }
+
+.cfg-actions { display: flex; align-items: center; gap: 10px; margin: 10px 0 0 98px; }
+.cfg-actions small { font-size: 11px; opacity: .62; }
+
+.cfg-card button:not(.cfg-close):not(.cfg-tabs button) {
+  font: inherit; font-size: 13px; cursor: pointer; color: #101513;
+  background: #7fe1b2; border: 0; border-radius: 7px; padding: 7px 14px;
+}
+.cfg-card button:hover:not(.cfg-close) { background: #93ecc2; }
+.cfg-card button:disabled { opacity: .45; cursor: default; }
+.cfg-card .cfg-test, .cfg-card #cfg-refresh {
+  background: rgba(168, 240, 198, .2); color: #d8f5e6;
+}
+.cfg-card .cfg-test:hover, .cfg-card #cfg-refresh:hover {
+  background: rgba(168, 240, 198, .32);
+}
+
+.cfg-key { display: flex; align-items: center; gap: 8px; margin: 10px 0; }
+.cfg-key > i {
+  width: 7px; height: 7px; flex: none; border-radius: 50%;
+  background: rgba(255, 255, 255, .28);
+}
+.cfg-key.ok > i { background: #7fe1b2; box-shadow: 0 0 6px rgba(127, 225, 178, .8); }
+.cfg-key > label { width: 178px; flex: none; }
+.cfg-key > label b { display: block; font-weight: 600; font-size: 12px; }
+.cfg-key > label small { display: block; font-size: 10.5px; opacity: .55; }
+.cfg-key > input {
+  flex: 1; min-width: 0; font: inherit; font-size: 13px; color: #e8ece9;
+  background: rgba(255, 255, 255, .07); border: 1px solid rgba(255, 255, 255, .16);
+  border-radius: 7px; padding: 7px 9px; outline: none;
+}
+.cfg-card .cfg-key .cfg-clear {
+  flex: none; font-size: 11.5px; padding: 5px 10px;
+  background: rgba(255, 120, 120, .16); color: #ffc9c9;
+}
+.cfg-card .cfg-key .cfg-clear:hover { background: rgba(255, 120, 120, .28); }
+
+.cfg-card footer {
+  display: flex; align-items: center; gap: 10px; padding: 12px 0 14px;
+  border-top: 1px solid rgba(255, 255, 255, .1);
+}
+.cfg-card footer small { flex: 1; font-size: 11px; opacity: .62; }
+body.obs #settings { display: none; }

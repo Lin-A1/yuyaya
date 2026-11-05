@@ -1,6 +1,9 @@
 fastapi>=0.100
 uvicorn>=0.23
 requests>=2.28
+aiohttp>=3.9
+# 可选：Edge 在线 TTS 备选音色（默认用 qwen-realtime，与实时语音同一音色）
+# edge-tts>=7.0
 # 可选：使用 Claude API 大脑时需要
 # anthropic
 # 可选：重新生成 / 加工素材时需要

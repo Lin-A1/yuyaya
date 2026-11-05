@@ -86,7 +86,100 @@
   <input id="input" placeholder="对鱼丫丫说点什么…（Enter 发送，Esc 打断）" maxlength="2000">
   <button type="button" id="mic-btn" title="开启连续语音对话" aria-pressed="false">语音</button>
   <button type="submit">发送</button>
+  <button type="button" id="cfg-btn" title="设置：音色、大脑、API key">设置</button>
 </form>
+
+<div id="settings" hidden>
+  <div class="cfg-card">
+    <header>
+      <h3>设置</h3>
+      <button type="button" class="cfg-close" id="cfg-close" title="关闭">×</button>
+    </header>
+
+    <nav class="cfg-tabs">
+      <button type="button" data-tab="mode">模式</button>
+      <button type="button" data-tab="half">半双工</button>
+      <button type="button" data-tab="full">全双工</button>
+      <button type="button" data-tab="agents">Agent</button>
+      <button type="button" data-tab="keys">密钥</button>
+    </nav>
+
+    <div class="cfg-page" data-page="mode">
+      <p class="cfg-lead">两条语音链路<b>只能选一条</b>生效，选了哪条，另一条会被自动关掉。</p>
+      <div class="cfg-modes" id="cfg-modes"></div>
+      <small id="cfg-mode-note" class="cfg-note" style="margin-left:0"></small>
+    </div>
+
+    <div class="cfg-page" data-page="half" hidden>
+      <p class="cfg-lead">LLM 出字 → TTS 念出来 → ASR 收你的话。三件各自独立，可以分别换。</p>
+
+      <h4>LLM（对话）</h4>
+      <label class="cfg-row"><span>接口类型</span><select id="cfg-llm-type"></select></label>
+      <label class="cfg-row"><span>快速预设</span><select id="cfg-llm-preset"></select></label>
+      <label class="cfg-row"><span>Base URL</span><input id="cfg-llm-base" placeholder="https://..."></label>
+      <label class="cfg-row"><span>模型</span><input id="cfg-llm-model" list="cfg-llm-models" placeholder="模型名"></label>
+      <datalist id="cfg-llm-models"></datalist>
+      <label class="cfg-row"><span>Key 变量</span><input id="cfg-llm-keyenv" placeholder="DEEPSEEK_API_KEY"></label>
+      <small id="cfg-llm-note" class="cfg-note"></small>
+
+      <h4>TTS（说话）</h4>
+      <label class="cfg-row"><span>引擎</span><select id="cfg-tts-provider"></select></label>
+      <label class="cfg-row"><span>音色</span><select id="cfg-tts-voice"></select></label>
+      <label class="cfg-row" id="cfg-tts-base-row"><span>Base URL</span><input id="cfg-tts-base" placeholder="https://..."></label>
+      <div class="cfg-actions">
+        <button type="button" class="cfg-test" id="cfg-test">试听这句</button>
+        <small id="cfg-test-note"></small>
+      </div>
+
+      <h4>ASR（听你说话）</h4>
+      <label class="cfg-row"><span>识别</span><select id="cfg-asr-provider"></select></label>
+      <label class="cfg-row" id="cfg-asr-model-row"><span>模型</span><select id="cfg-asr-model"></select></label>
+      <label class="cfg-row" id="cfg-asr-base-row"><span>Base URL</span><input id="cfg-asr-base" placeholder="https://..."></label>
+      <small id="cfg-asr-note" class="cfg-note"></small>
+    </div>
+
+    <div class="cfg-page" data-page="full" hidden>
+      <p class="cfg-lead">音频进、音频出，随时能听、随时打断。目前只有 Qwen 一家。</p>
+      <label class="cfg-row"><span>服务商</span><select id="cfg-full-provider"></select></label>
+      <label class="cfg-row"><span>模型</span><select id="cfg-full-model"></select></label>
+      <label class="cfg-row"><span>音色</span><select id="cfg-full-voice"></select></label>
+      <small id="cfg-full-note" class="cfg-note"></small>
+    </div>
+
+    <div class="cfg-page" data-page="agents" hidden>
+      <p class="cfg-lead">命令行 agent 负责"动手"，说话仍由她自己完成。装了的才能选。</p>
+      <label class="cfg-switch">
+        <input type="checkbox" id="cfg-agents-on">
+        <span>启用后台 agent</span>
+        <small id="cfg-agents-state"></small>
+      </label>
+
+      <h4>用几个</h4>
+      <div class="cfg-modes cfg-modes--sm" id="cfg-agent-modes"></div>
+      <label class="cfg-row" id="cfg-agent-active-row"><span>指定</span><select id="cfg-agent-active"></select></label>
+
+      <h4>可用的命令行</h4>
+      <div id="cfg-clis"></div>
+      <label class="cfg-switch cfg-switch--sub">
+        <input type="checkbox" id="cfg-desktop-on">
+        <span>允许操作桌面</span>
+        <small>Codex 解除沙箱（danger-full-access），只给桌面类任务用；权限很大，风险自担。</small>
+      </label>
+    </div>
+
+    <div class="cfg-page" data-page="keys" hidden>
+      <p class="cfg-lead">只存在本机 <code>state/secrets.json</code>（不入库），保存后立即生效。
+        留空表示不改；要删掉请点「清除」。</p>
+      <div id="cfg-keys"></div>
+    </div>
+
+    <footer>
+      <small id="cfg-status"></small>
+      <button type="button" id="cfg-refresh" title="重新探测命令行 agent">重新探测</button>
+      <button type="button" id="cfg-save">保存</button>
+    </footer>
+  </div>
+</div>
 
 <script src="js/rig.js"></script>
 <script src="js/avatar.js"></script>
@@ -94,6 +187,7 @@
 <script src="js/speech.js"></script>
 <script src="js/voice.js"></script>
 <script src="js/realtime.js"></script>
+<script src="js/settings.js"></script>
 <script src="js/main.js"></script>
 </body>
 </html>

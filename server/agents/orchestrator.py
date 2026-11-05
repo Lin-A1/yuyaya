@@ -87,6 +87,9 @@ class Orchestrator:
         self.backends: dict[str, AgentBackend] = build_backends(conf)
         self.default = agents.get("default") or next(iter(self.backends), "")
         self.routing: dict = agents.get("routing") or {}
+        # auto = 按 kind 路由；manual = 只用 default 那一个后端
+        self.mode = agents.get("mode") or "auto"
+        self.active_backend = agents.get("active") or ""
         self.max_concurrent = int(agents.get("max_concurrent", 2))
         self.max_refine = int(agents.get("max_refine", 1))
         self.ack = ((conf.get("actions") or {}).get("ack") or "好，我去弄一下！").strip()
@@ -104,12 +107,20 @@ class Orchestrator:
 
     def info(self) -> dict:
         return {"enabled": self.enabled, "default": self.default,
+                "routing": dict(self.routing), "mode": getattr(self, "mode", "auto"),
+                "active": getattr(self, "active_backend", ""),
                 "max_concurrent": self.max_concurrent,
                 "backends": [b.info() for b in self.backends.values()]}
 
     def pick_backend(self, name: str | None, kind: str) -> tuple[str | None, str]:
-        """选后端：点名 > 按 kind 路由 > 默认；不可用就回退，并说明原因。"""
-        want = (name or "").strip().lower() or self.routing.get(kind) or self.default
+        """选后端：点名 > 按 kind 路由 > 默认；不可用就回退，并说明原因。
+
+        manual 模式（只用一个 CLI）下，路由表被忽略，一律用 default。
+        """
+        if getattr(self, "mode", "auto") == "manual":
+            want = (name or "").strip().lower() or self.default
+        else:
+            want = (name or "").strip().lower() or self.routing.get(kind) or self.default
         note = ""
         order = [want, self.default] + list(self.backends)
         for i, n in enumerate(order):

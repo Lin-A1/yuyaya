@@ -31,25 +31,43 @@ from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from .actions import ActionRunner, OrchestratedActions
+from . import catalog, configure
 from .agents import Initiative, Orchestrator
+from .agents.backends import build_backends
 from .brains import Brain, build_brain
 from .intent import is_action_request
 from .io import (EventBus, InputDispatcher, InputError, Turn, TurnManager,
                  build_inputs, build_outputs, build_tts, make_input)
 from .memory import Session
+from .asr import ASRError as asr_error
+from .asr import transcribe as asr_transcribe
 from .protocol import EMOTION_CN, EMOTIONS, MOTIONS, SpeechStream, normalize_emotion, normalize_motion
 from .realtime import RealtimeRuntime
+from .settings import Settings
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 log = logging.getLogger("yuyaya")
 
 
-def load_config() -> dict:
+def config_path() -> pathlib.Path:
     path = pathlib.Path(os.environ.get("YUYAYA_CONFIG", ROOT / "config.json"))
-    if not path.exists():
-        path = ROOT / "config.example.json"
+    return path if path.exists() else ROOT / "config.example.json"
+
+
+def load_config() -> dict:
+    """读 config.json，并把老结构自动迁移成新结构（迁移结果会在保存设置时写回）。"""
+    path = config_path()
     log.info("config: %s", path)
-    return json.loads(path.read_text(encoding="utf-8"))
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    conf, migrated = configure.migrate(raw)
+    if migrated:
+        log.info("配置已从旧结构迁移到 v%d（下次保存设置时写回文件）", configure.SCHEMA_VERSION)
+    return conf
+
+
+def runtime_conf(conf: dict) -> dict:
+    """把三层配置摊平成各模块直接可用的字典。"""
+    return configure.resolve(conf)
 
 
 # 兼容旧代码：server.app.Hub 就是 EventBus
@@ -251,25 +269,105 @@ class Avatar:
 def create_app() -> FastAPI:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     conf = load_config()
+    # 页面设置：先把本地保存的 key 装进环境变量，再建大脑 / 实时语音，它们才看得到
+    state_path = pathlib.Path(os.environ.get("YUYAYA_STATE", ROOT / "state" / "memory.json"))
+    settings = Settings(conf, config_path(), state_path.parent)
+    # conf 是三层结构（页面编辑的就是它）；rt 是摊平后各模块直接用的形状
+    rt = configure.compat(configure.resolve(conf))
     bus = EventBus()
     hub = bus                      # 兼容旧的端点写法
     turns = TurnManager(bus)
-    avatar = Avatar(bus, conf, turns)
+    avatar = Avatar(bus, rt, turns)
     dispatcher = InputDispatcher(avatar, turns)
-    outputs = build_outputs(conf, bus)
+    outputs = build_outputs(rt, bus)
     sse = outputs.get("sse")
-    inputs = build_inputs(conf, dispatcher)
-    tts_provider = build_tts(conf)
-    realtime = RealtimeRuntime(bus, avatar, conf.get("realtime") or {})
+    inputs = build_inputs(rt, dispatcher)
+    tts = {"provider": build_tts(rt)}          # 可变：改设置后可以重建
+    realtime = RealtimeRuntime(bus, avatar, rt.get("realtime") or {})
     orch, initiative = avatar.orch, avatar.initiative
     # 主动发言的出口：有实时会话就让模型自己组织语言；否则退路用 say（走本机 TTS）
     initiative.speaker = realtime.speaker
     initiative.fallback_say = lambda t: avatar.say(t, source="initiative")
     initiative.present = lambda: bool(sse is not None and sse.clients > 0)
-    voice_conf = conf.get("voice") or {}
+    voice_conf = rt.get("voice") or {}
     tts_conf = voice_conf.get("tts") or {}
-    security_conf = conf.get("security") or {}
+    security_conf = rt.get("security") or {}
     app = FastAPI(title="鱼丫丫数字人")
+
+    def tts_provider():
+        return tts["provider"]
+
+    def rebuild_tts() -> None:
+        """改过 TTS 引擎/音色后重建 provider（就地更新，其它引用仍然有效）。"""
+        tts["provider"] = build_tts(rt)
+
+    def runtime_state() -> dict:
+        """当前真正生效的运行状态（给设置页对照"选了"和"实际能用"）。"""
+        return {"agents": {"backends": list(orch.backends)}, "full": realtime.info()}
+
+    def apply_config(changed_keys: dict) -> list[str]:
+        """把刚保存的配置推到运行中的对象上，能不改就不重启。"""
+        applied: list[str] = []
+        new_rt = configure.compat(configure.resolve(conf))
+        settings.conf = conf
+        rt["mode"] = new_rt.get("mode")
+        rt["llm"] = new_rt.get("_capabilities", {}).get("llm") or {}
+        rt["asr"] = new_rt.get("_capabilities", {}).get("asr") or {}
+
+        # 半双工 LLM：换大脑（重建 Avatar 太重，只换 active + 补齐新大脑）
+        llm_name = new_rt.get("default")
+        for name, spec in (new_rt.get("brains") or {}).items():
+            if name not in avatar.brains:
+                try:
+                    avatar.brains[name] = build_brain(name, spec)
+                    applied.append(f"brain+{name}")
+                except Exception as e:
+                    log.warning("重建大脑 %s 失败：%s", name, e)
+        if llm_name in avatar.brains:
+            avatar.active = llm_name
+            applied.append(f"brain={llm_name}")
+
+        # 朗读链
+        rt["voice"] = new_rt["voice"]
+        rt["realtime"] = new_rt["realtime"]
+        rebuild_tts()
+        app.state.tts_provider = tts["provider"]
+        applied.append(f"tts={rt['voice']['tts']['provider']}/{rt['voice']['tts']['voice']}")
+
+        # 全双工
+        realtime.conf = new_rt["realtime"]
+        realtime.enabled = bool(new_rt["realtime"].get("enabled"))
+        realtime.model = new_rt["realtime"].get("model") or realtime.model
+        realtime.voice = new_rt["realtime"].get("voice") or realtime.voice
+        realtime.api_key_env = new_rt["realtime"].get("api_key_env") or realtime.api_key_env
+        applied.append(f"mode={'full' if realtime.enabled else 'half'}")
+
+        # Agent：模式 / 路由 / 默认后端走 new_rt["agents"]（已含 mode/active）
+        want = new_rt["agents"]
+        have = {k: b.conf.get("cmd") for k, b in orch.backends.items()}
+        if {k: v.get("cmd") for k, v in want["backends"].items()} != have:
+            try:
+                rebuilt = build_backends(new_rt)
+                if rebuilt:
+                    orch.backends = rebuilt
+                    applied.append("agents=" + ",".join(rebuilt))
+            except Exception as e:
+                log.warning("重建 agent 后端失败：%s", e)
+        orch.default = want["default"] or orch.default
+        orch.routing = want.get("routing") or {}
+        orch.enabled = bool(want["enabled"]) and bool(orch.backends)
+        orch.max_concurrent = int(want.get("max_concurrent", 2))
+        orch.mode = want.get("mode") or "auto"
+        orch.active_backend = want.get("active") or ""
+        applied.append(f"agents:{orch.mode}->{orch.default}")
+
+        # 改了 key：Claude 客户端缓存了旧 key，实时语音也要重读
+        for b in avatar.brains.values():
+            if hasattr(b, "_client"):
+                b._client = None
+        hub.publish({"type": "brains", **avatar.brain_info()})
+        hub.publish({"type": "voice", **voice_status()})
+        return applied
 
     def require_local_control(request: Request) -> None:
         if security_conf.get("allow_remote_actions"):
@@ -293,7 +391,9 @@ def create_app() -> FastAPI:
     app.state.dispatcher = dispatcher
     app.state.outputs = outputs
     app.state.inputs = inputs
-    app.state.tts_provider = tts_provider
+    app.state.tts = tts              # {"provider": ...}，改设置后就地替换
+    app.state.settings = settings
+    app.state.tts_provider = tts["provider"]
     app.state.realtime = realtime
     app.state.orch = orch
     app.state.initiative = initiative
@@ -463,22 +563,55 @@ def create_app() -> FastAPI:
         require_local_control(request)
         return avatar.actions.stop()
 
-    @app.get("/api/voice/config")
-    async def voice_config():
-        tts_info = tts_provider.info()
-        asr_info = inputs["browser_speech"].info() if "browser_speech" in inputs else {
-            "provider": "browser", "continuous": True, "barge_in": "speech_start"}
+    def voice_status() -> dict:
+        """前端判断"现在用哪条链路"的依据。"""
+        p = tts_provider()
+        tts_info = p.info()
+        asr = configure.resolve(conf)["asr"]
+        asr_ok = asr["enabled"] and (not asr["key_env"] or bool(os.environ.get(asr["key_env"])))
         return {
             "tts": {
-                "enabled": bool(tts_conf.get("enabled", True)) and tts_provider.available(),
+                "enabled": bool(tts_conf.get("enabled", True)) and p.available(),
                 "provider": tts_info.get("provider", ""),
-                "voice": tts_conf.get("voice") or "Microsoft Huihui Desktop",
+                "voice": tts_info.get("voice") or tts_conf.get("voice") or "",
                 "rate": int(tts_conf.get("rate", 0)),
                 "volume": int(tts_conf.get("volume", 100)),
             },
-            "asr": asr_info,
+            "asr": {"provider": asr["provider"], "label": asr["label"], "model": asr["model"],
+                    "enabled": asr_ok,
+                    "reason": "" if asr_ok else
+                    ("没有选语音识别" if not asr["enabled"]
+                     else f"需要设置环境变量 {asr['key_env']}")},
             "realtime": realtime.info(),
+            "mode": configure.resolve(conf)["mode"],
+            "half": {"llm": (rt.get("llm") or {}).get("label") or "",
+                     "model": (rt.get("llm") or {}).get("model") or ""},
         }
+
+    @app.get("/api/voice/config")
+    async def voice_config():
+        return voice_status()
+
+    @app.get("/api/settings")
+    async def get_settings(refresh: int = 0):
+        """设置页的全量数据：全双工、半双工三件套、三个 CLI 的探测结果、key 状态。
+
+        ``?refresh=1`` 会重新探测 CLI 的版本和模型列表（约 2~3 秒）。
+        """
+        if refresh:
+            catalog.clear_cache()
+        return settings.snapshot(runtime_state())
+
+    @app.post("/api/settings")
+    async def post_settings(request: Request, body: dict = Body(...)):
+        require_local_control(request)      # 能写 key，只允许本机
+        try:
+            changed = settings.update(body)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        applied = apply_config(dict(body.get("keys") or {}))
+        return {"ok": True, "changed": changed, "applied": applied,
+                **settings.snapshot(runtime_state())}
 
     @app.post("/api/tts")
     async def say_tts(body: dict = Body(...)):
@@ -487,16 +620,26 @@ def create_app() -> FastAPI:
             raise HTTPException(400, "text is required")
         if len(text) > 600:
             text = text[:600]
+        # 设置面板的“试听”可以带 provider：不保存也能试听另一个引擎的音色
+        requested = (body.get("provider") or "").strip()
+        p = tts_provider()
+        if requested and requested != p.type:
+            sel = dict(((conf.get("voice") or {}).get("half") or {}).get("tts") or {})
+            sel["provider"] = requested
+            try:
+                p = build_tts({"voice": {"tts": sel}})
+            except ValueError as e:
+                raise HTTPException(400, str(e))
         try:
             wav = await asyncio.to_thread(
-                tts_provider.synth_wav, text,
+                p.synth_wav, text,
                 body.get("voice") or tts_conf.get("voice") or "",
                 int(body.get("rate", tts_conf.get("rate", 0))),
                 int(body.get("volume", tts_conf.get("volume", 100))),
             )
         except Exception as e:
             raise HTTPException(503, f"TTS 不可用：{e}")
-        return Response(content=wav, media_type="audio/wav",
+        return Response(content=wav, media_type=getattr(p, "mime", "audio/wav"),
                         headers={"Cache-Control": "no-store"})
 
     @app.get("/api/memory")
@@ -547,6 +690,33 @@ def create_app() -> FastAPI:
         avatar.active = name
         hub.publish({"type": "brain", **avatar.brain_info()})
         return avatar.brain_info()
+
+    @app.post("/api/asr")
+    async def speech_to_text(request: Request):
+        """半双工的语音输入：前端录一段音频，这里转成文字。
+
+        前端把录音整段传过来（webm/ogg/wav/mp3 都认），识别结果当成一次
+        ``speech_final`` 交给同一个统一入口，和浏览器自带识别的路径完全一致。
+        """
+        require_local_control(request)
+        asr = configure.resolve(conf)["asr"]
+        if not asr["enabled"]:
+            raise HTTPException(400, "没有启用语音识别")
+        audio = await request.body()
+        if not audio:
+            raise HTTPException(400, "没收到音频")
+        if len(audio) > 8 * 1024 * 1024:
+            raise HTTPException(413, "录音太长了")
+        try:
+            text = await asyncio.to_thread(
+                asr_transcribe, audio, asr["provider"], asr["model"], asr["key_env"],
+                asr.get("base_url", ""))
+        except asr_error as e:
+            raise HTTPException(503, str(e))
+        text = (text or "").strip()
+        if text:
+            dispatcher.route({"type": "speech_final", "text": text, "source": "asr"})
+        return {"text": text}
 
     web = ROOT / "web"
 

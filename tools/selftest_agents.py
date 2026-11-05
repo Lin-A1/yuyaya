@@ -66,7 +66,7 @@ class FakeSpeaker:
 
     def has_session(self): return self.session
     def idle(self): return self.is_idle
-    def speak(self, text): self.said.append(text); return True
+    def speak(self, text, grace=0.0): self.said.append(text); return True
 
 
 def agents_suite(client, tmp: pathlib.Path, check) -> None:

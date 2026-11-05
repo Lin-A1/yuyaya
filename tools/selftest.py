@@ -81,7 +81,7 @@ def test_api() -> None:
             check("动作请求走执行器",
                   r.status_code == 200 and r.json().get("action") is True, r.text[:160])
             r = client.post("/api/chat", json={"text": "hi", "brain": "codex", "wait": True})
-            check("聊天不能直接选 CLI 智能体", r.status_code == 400, r.text[:120])
+            check("聊天不能直接选不存在的 CLI 名字", r.status_code == 404, r.text[:120])
             r = client.get("/api/voice/config")
             check("语音配置接口", r.status_code == 200 and "tts" in r.json(), r.text[:120])
             r = client.post("/api/tts", json={"text": "你好", "volume": 20})
@@ -119,7 +119,117 @@ def test_api() -> None:
                   str(cfg2.get("tts")))
             check("voice config 带 realtime 能力", "realtime" in cfg2, str(cfg2)[:120])
 
+            # 页面设置：三层配置（全双工 / 半双工 LLM+TTS+ASR / agent CLI）
+            st = client.get("/api/settings").json()
+            check("设置接口有全双工 / 半双工 / agent 三层",
+                  {"full", "llm", "tts", "asr", "agents", "keys"} <= set(st),
+                  str(list(st))[:120])
+            check("半双工只列一家全双工服务商（Qwen）",
+                  [p["id"] for p in st["full"]["providers"]] == ["qwen"],
+                  str([p["id"] for p in st["full"]["providers"]]))
+            check("全双工音色表有平台预置音色",
+                  len(st["full"]["voices"]) > 5 and st["full"]["voice"] == "qiaoxiaojiao_v3.1",
+                  str(st["full"]["voice"]))
+            check("LLM 只认三类通用接口",
+                  [t["id"] for t in st["llm"]["types"]] == ["openai", "anthropic", "gemini"],
+                  str([t["id"] for t in st["llm"]["types"]]))
+            check("预设带各自的模型表",
+                  all("models" in p for p in st["llm"]["presets"])
+                  and any(p["id"] == "deepseek" for p in st["llm"]["presets"]),
+                  str([(p["id"], len(p["models"])) for p in st["llm"]["presets"]]))
+            check("模式是二选一（full / half）",
+                  [m["id"] for m in st["modes"]] == ["full", "half"],
+                  str([m["id"] for m in st["modes"]]))
+            check("ASR 可选 none（不启用语音输入）",
+                  any(p["id"] == "none" for p in st["asr"]["providers"]),
+                  str([p["id"] for p in st["asr"]["providers"]]))
+            check("agent 三个 CLI 都被探测到（装没装都要有记录）",
+                  len(st["agents"]["cli"]) == 3
+                  and all({"installed", "models", "enabled"} <= set(c) for c in st["agents"]["cli"]),
+                  str([(c["id"], c["installed"]) for c in st["agents"]["cli"]]))
+            check("设置接口不泄露 key 明文",
+                  all("hint" in k and len(k.get("hint", "")) < 24 for k in st["keys"]),
+                  str(st["keys"])[:120])
+
+            # 换 TTS 引擎：音色必须跟着换到新引擎的表里
+            r = client.post("/api/settings", json={
+                "tts": {"provider": "sapi"},
+                "keys": {"DEEPSEEK_API_KEY": "sk-selftest-not-real"}})
+            changed = r.json().get("changed") or {}
+            check("设置能改朗读引擎并立即重建 provider",
+                  r.status_code == 200 and changed.get("tts.provider") == "sapi"
+                  and client.app.state.tts_provider.info()["provider"] == "sapi", str(changed))
+            check("换引擎后音色自动换成新引擎的",
+                  changed.get("tts.voice") == "Microsoft Huihui Desktop", str(changed))
+            check("key 写进 state/secrets.json 并立即生效",
+                  os.environ.get("DEEPSEEK_API_KEY") == "sk-selftest-not-real"
+                  and (tmp / "secrets.json").exists(), str(os.environ.get("DEEPSEEK_API_KEY")))
+            check("key 只回显掩码",
+                  r.json()["keys"][1]["hint"] == "sk-…real", str(r.json()["keys"][1]))
+            r = client.post("/api/settings", json={"keys": {"DEEPSEEK_API_KEY": ""}})
+            check("清空 key 会删掉它",
+                  not os.environ.get("DEEPSEEK_API_KEY")
+                  and not (r.json()["keys"][1]["set"]), str(r.json()["keys"][1]))
+
+            # 切 LLM：通用三件套，活跃大脑跟着换
+            r = client.post("/api/settings", json={"llm": {
+                "preset": "qwen", "type": "openai", "model": "qwen-plus",
+                "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                "api_key_env": "DASHSCOPE_API_KEY"}})
+            changed = r.json().get("changed") or {}
+            check("切 LLM 会同时更新活跃大脑",
+                  changed.get("llm.preset") == "qwen"
+                  and client.app.state.avatar.active == "qwen", str(changed))
+            check("LLM 存的是通用四件套（不是服务商）",
+                  r.json()["llm"]["type"] == "openai"
+                  and r.json()["llm"]["model"] == "qwen-plus", str(r.json()["llm"]))
+            # 直接填 base_url 换一个没预设过的服务商也能用
+            r = client.post("/api/settings", json={"llm": {
+                "type": "openai", "base_url": "https://example.invalid/v1",
+                "model": "some-model", "api_key_env": "SOME_KEY"}})
+            d = r.json()["llm"]
+            check("能配任意的 OpenAI 兼容服务商",
+                  d["base_url"] == "https://example.invalid/v1" and d["model"] == "some-model",
+                  str(d)[:140])
+
+            # 模式互斥：全双工模式下半双工的 ASR 不参与
+            # （realtime.enabled 还取决于有没有 key，这里只看模式是否抑制了 ASR）
+            client.post("/api/settings", json={"mode": "full"})
+            vc = client.get("/api/voice/config").json()
+            check("全双工模式下 ASR 被抑制",
+                  vc["mode"] == "full" and vc["asr"]["enabled"] is False, str(vc)[:160])
+            client.post("/api/settings", json={"mode": "half"})
+            vc = client.get("/api/voice/config").json()
+            check("半双工模式下 ASR 恢复", vc["mode"] == "half" and vc["asr"]["provider"] != "",
+                  str(vc)[:160])
+
+            # ASR 关掉：麦克风不可用；打开：暴露 qwen3-asr-flash
+            r = client.post("/api/settings", json={"asr": {"provider": "none"}})
+            check("ASR 选 none 后语音输入标记为不可用",
+                  client.get("/api/voice/config").json()["asr"]["enabled"] is False,
+                  str(client.get("/api/voice/config").json()["asr"]))
+            r = client.post("/api/settings", json={"asr": {"provider": "qwen"}})
+            vc = client.get("/api/voice/config").json()
+            check("ASR 打开后暴露识别模型",
+                  vc["asr"]["model"] == "qwen3-asr-flash", str(vc["asr"]))
+            r = client.post("/api/asr", content=b"")
+            check("空录音被拒", r.status_code == 400, r.text[:80])
+
+            # CLI 模型：选了就进命令行，没选就用 CLI 自己的默认
+            from server.catalog import apply_model
+            check("--model 插在子命令之后",
+                  apply_model(["codex", "exec", "--skip-git-repo-check", "-"], ["-m"], "gpt-5")
+                  == ["codex", "exec", "-m", "gpt-5", "--skip-git-repo-check", "-"], "")
+            check("已有 --model 就替换而不是重复添加",
+                  apply_model(["claude", "-p", "--model", "sonnet"], ["--model"], "opus")
+                  == ["claude", "-p", "--model", "opus"], "")
+            r = client.post("/api/settings", json={
+                "agents": {"cli": {"claude": {"model": "opus"}}}})
+            check("CLI 选模型写进配置", (r.json().get("changed") or {}).get(
+                "agents.cli.claude.model") == "opus", str(r.json().get("changed")))
+
             # Codex 工具：同步执行并拿回结果（实时语音用它和 Codex 交互）
+            # 用假后端，不依赖本机装的 CLI、也不花 token
             time.sleep(0.3)
             res = client.app.state.avatar.actions.run("测试任务", timeout=20)
             check("Codex 工具返回输出", res.get("ok") is True and "action ok" in res.get("output", ""),

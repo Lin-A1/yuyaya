@@ -82,7 +82,7 @@ TOOL_SCHEMAS = [
 ALIASES = {"agent_start": "do_task", "codex": "do_task", "computer_action": "do_task",
            "agent_status": "task_status", "agent_cancel": "task_cancel", "agent_reply": "task_answer"}
 
-_JOB_FIELDS = ("id", "task", "status", "elapsed", "question", "result", "error")
+_JOB_FIELDS = ("id", "task", "status", "elapsed", "question", "result", "error", "progress")
 
 
 def _for_model(job: dict) -> dict:
@@ -90,6 +90,15 @@ def _for_model(job: dict) -> dict:
     out = {k: job[k] for k in _JOB_FIELDS if job.get(k) not in (None, "", [])}
     if "id" in out:
         out["job_id"] = out.pop("id")
+    # progress 是后端输出流的最近几行，可能很长很吵；只给最后一条，够她"说一句正在做什么"
+    prog = out.get("progress")
+    if isinstance(prog, list):
+        out["progress"] = (prog[-1] if prog else None) or None
+        if out["progress"] is None:
+            out.pop("progress")
+    if out["status"] in ("running", "queued") and not out.get("elapsed_note"):
+        out["note"] = ("这件事还在做。用户问进度就用一句话说说在做什么，"
+                       "不要说得像已经完成了。")
     return out
 
 

@@ -16,7 +16,8 @@ import json, os, sys, urllib.request
 
 URL = os.environ.get("YUYAYA_URL", "http://127.0.0.1:8848").rstrip("/")
 EMOTIONS = ["neutral", "happy", "sad", "surprised", "thinking", "shy", "angry"]
-MOTIONS = ["nod", "shake", "hop", "jump", "droop", "tremble", "tilt", "wiggle", "sniff", "sigh"]
+MOTIONS = ["nod", "shake", "hop", "jump", "droop", "tremble", "tilt", "wiggle", "sniff",
+           "sigh", "startle", "lean"]
 
 TOOLS = [
     {
