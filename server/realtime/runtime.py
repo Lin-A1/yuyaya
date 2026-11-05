@@ -401,9 +401,26 @@ class RealtimeRuntime:
         self.voice = self.conf.get("voice") or "qiaoxiaojiao_v3.1"
         self.input_rate = int(self.conf.get("input_sample_rate", 16000))
         self.output_rate = int(self.conf.get("output_sample_rate", 24000))
-        self.base_instructions = self.conf.get("instructions") or (
-            PERSONA
-            + """
+        self.base_instructions = self.build_instructions()
+        self.turn_detection = {
+            "type": "server_vad",
+            "threshold": float(self.conf.get("vad_threshold", 0.5)),
+            "silence_duration_ms": int(self.conf.get("silence_duration_ms", 500)),
+        }
+        self.enable_tools = bool(self.conf.get("tools", True))
+        self.bridges: list = []
+        self.speaker = _Speaker(self)
+
+    def _persona(self) -> str:
+        """当前人设：页面上改过就用改过的，没改就用内置。"""
+        return self.conf.get("persona_text") or PERSONA
+
+    def build_instructions(self) -> str:
+        """人设 + 语音模式下的额外约定。人设改了要重新调这个。"""
+        return (self.conf.get("instructions")
+                or (self._persona() + self.VOICE_SUFFIX))
+
+    VOICE_SUFFIX = """
 
 （你现在是语音输出：方括号里的情绪/动作标签只作为文字标记，不要念出来。）
 
@@ -419,16 +436,7 @@ class RealtimeRuntime:
   定不了或有风险，再用一句话问用户，拿到答案后用 task_answer 接着做。
 - 以 [定时提醒]、[主动触发]、[外部通知] 开头的也是系统消息：自然地对用户说一句；
   如果此刻没什么值得说的，可以什么都不说。
-- 用户说“别吵我/安静一会”就调用 quiet。需要之后再提醒用户的事，用 schedule 留给未来的自己。""")
-        # 只发官方示例里出现过的字段，避免平台拒绝未知参数
-        self.turn_detection = {
-            "type": "server_vad",
-            "threshold": float(self.conf.get("vad_threshold", 0.5)),
-            "silence_duration_ms": int(self.conf.get("silence_duration_ms", 500)),
-        }
-        self.enable_tools = bool(self.conf.get("tools", True))
-        self.bridges: list = []
-        self.speaker = _Speaker(self)
+- 用户说“别吵我/安静一会”就调用 quiet。需要之后再提醒用户的事，用 schedule 留给未来的自己。"""
 
     def touch(self) -> None:
         init = getattr(self.avatar, "initiative", None)

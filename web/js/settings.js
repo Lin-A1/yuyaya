@@ -13,6 +13,10 @@ const SettingsPanel = {
     if (!box) return;
     box.hidden = false;
     this.setStatus("读取中…");
+    // 等页面初始化完（下拉、播放器都依赖 main() 里的对象）
+    for (let i = 0; i < 40 && typeof SettingsPanel.player !== "object"; i++) {
+      await new Promise((r) => setTimeout(r, 250));
+    }
     try {
       this.data = await api("/api/settings");
     } catch (e) {
@@ -21,7 +25,7 @@ const SettingsPanel = {
     }
     this.render();
     this.setStatus("");
-    this.showTab(this.data.mode === "full" ? "full" : "mode");
+    this.showTab(this.data.mode === "full" ? "full" : "half");
   },
 
   close() {
@@ -55,8 +59,19 @@ const SettingsPanel = {
     this.renderMode();
     this.renderHalf();
     this.renderFull();
+    this.renderPersona();
     this.renderAgents();
     this.renderKeys();
+  },
+
+  renderPersona() {
+    const p = this.data.persona || {};
+    $("#cfg-p-name").value = p.name || "";
+    $("#cfg-p-address").value = p.address || "";
+    $("#cfg-p-identity").value = p.identity || "";
+    $("#cfg-p-extra").value = p.extra || "";
+    $("#cfg-p-note").textContent = p.customized ? "正在使用自定义人设" : "使用内置人设";
+    $("#cfg-p-rules").textContent = this.data.persona_rules || "";
   },
 
   /** 单选卡片（模式 / agent 用几个） */
@@ -78,18 +93,22 @@ const SettingsPanel = {
   },
 
   renderMode() {
-    const d = this.data;
-    this.renderChoices($("#cfg-modes"), d.modes, d.mode, (v) => {
-      this.data.mode = v;
-      // 选了全双工就跳过去看看；这两个互斥，页面上直接说清楚
-      $("#cfg-mode-note").textContent = v === "full"
-        ? "现在用全双工：麦克风和回复都走实时模型，半双工的 LLM / ASR 不参与。"
-        : "现在用半双工：LLM 出字、TTS 念出来、ASR 收话。全双工连接会被关闭。";
-      this.showTab(v === "full" ? "full" : "half");
+    const d = this.data || {};
+    const bar = $("#cfg-modebar");
+    if (!bar) return;
+    bar.querySelectorAll("button").forEach((b) => {
+      b.classList.toggle("on", b.dataset.mode === d.mode);
     });
-    $("#cfg-mode-note").textContent = d.mode === "full"
-      ? "现在用全双工：麦克风和回复都走实时模型，半双工的 LLM / ASR 不参与。"
-      : "现在用半双工：LLM 出字、TTS 念出来、ASR 收话。全双工连接会被关闭。";
+    // 非当前模式的页面明确标出来（免得以为改了就生效）
+    const onFull = d.mode === "full";
+    $("#cfg-half-lead").textContent = onFull
+      ? "⚠ 当前是「全双工」模式，这一页的 LLM / ASR 不会生效；点顶部「半双工」切换过去才会用。"
+      : "LLM 出字 → TTS 念出来 → ASR 收你的话。三件各自独立，可以分别换。";
+    $("#cfg-half-lead").classList.toggle("cfg-lead--warn", onFull);
+    $("#cfg-full-lead").textContent = onFull
+      ? "音频进、音频出，随时能听、随时打断。目前只有 Qwen 一家。"
+      : "⚠ 当前是「半双工」模式，全双工不会生效；点顶部「全双工」切换过去才会用。";
+    $("#cfg-full-lead").classList.toggle("cfg-lead--warn", !onFull);
   },
 
   renderHalf() {
@@ -101,14 +120,20 @@ const SettingsPanel = {
     this.fillSelect($("#cfg-llm-preset"),
       (llm.presets || []).map((p) => ({ id: p.id, label: `${p.label} · ${p.type}` })),
       llm.preset);
+    const typeRow = (llm.types || []).find((t) => t.id === llm.type) || {};
+    const needsBase = !!(typeRow.default_base || llm.type === "completions"
+                        || llm.type === "responses");
     $("#cfg-llm-base").value = llm.base_url || "";
+    $("#cfg-llm-base").closest(".cfg-row").hidden = !needsBase;
     $("#cfg-llm-model").value = llm.model || "";
+    $("#cfg-llm-model").closest(".cfg-row").hidden = llm.type === "demo";
     $("#cfg-llm-keyenv").value = llm.api_key_env || "";
+    $("#cfg-llm-keyenv").closest(".cfg-row").hidden = llm.type === "demo";
     const preset = (llm.presets || []).find((p) => p.id === llm.preset) || {};
     $("#cfg-llm-models").innerHTML = (preset.models || [])
       .map((m) => `<option value="${m}">`).join("");
     $("#cfg-llm-note").textContent = [preset.note || "",
-      llm.available ? "" : "缺少对应 key"].filter(Boolean).join(" · ");
+      llm.type === "demo" ? "" : (llm.available ? "" : "缺少对应 key")].filter(Boolean).join(" · ");
 
     // TTS
     this.fillSelect($("#cfg-tts-provider"),
@@ -241,7 +266,12 @@ const SettingsPanel = {
     const llm = this.data.llm || {};
     const type = $("#cfg-llm-type").value;
     const row = (llm.types || []).find((t) => t.id === type) || {};
-    if (!$("#cfg-llm-base").value) $("#cfg-llm-base").value = row.default_base || "";
+    const demo = type === "demo";
+    const needsBase = !demo && !!(row.default_base || type === "completions" || type === "responses");
+    $("#cfg-llm-base").closest(".cfg-row").hidden = !needsBase;
+    $("#cfg-llm-model").closest(".cfg-row").hidden = demo;
+    $("#cfg-llm-keyenv").closest(".cfg-row").hidden = demo;
+    if (!$("#cfg-llm-base").value && needsBase) $("#cfg-llm-base").value = row.default_base || "";
     $("#cfg-llm-note").textContent = row.note || "";
   },
 
@@ -250,12 +280,13 @@ const SettingsPanel = {
     const llm = this.data.llm || {};
     const p = (llm.presets || []).find((x) => x.id === $("#cfg-llm-preset").value) || {};
     if (p.type) $("#cfg-llm-type").value = p.type;
+    this.onLLMType();
     $("#cfg-llm-base").value = p.base_url || "";
     // demo 这类没有模型表的预设，模型字段要清空，别留着上一个预设的值
     $("#cfg-llm-model").value = (p.models || []).length ? (p.model || "") : "";
     $("#cfg-llm-keyenv").value = p.api_key_env || "";
     $("#cfg-llm-models").innerHTML = (p.models || []).map((m) => `<option value="${m}">`).join("");
-    $("#cfg-llm-note").textContent = p.note || "";
+    $("#cfg-llm-note").textContent = p.note || (p.type === "demo" ? "不联网、不用 key，台词写死。" : "");
   },
 
   onTTSProvider() {
@@ -289,7 +320,7 @@ const SettingsPanel = {
         model: (row.querySelector(".cli-model") || {}).value || "",
       };
     });
-    const mode = (document.querySelector('#cfg-modes input:checked') || {}).value || "half";
+    const mode = this.data.mode || "half";     // 顶部切换条选的
     const agentMode = (document.querySelector('#cfg-agent-modes input:checked') || {}).value || "auto";
     const presetId = $("#cfg-llm-preset").value;
     const p = (this.data.llm.presets || []).find((x) => x.id === presetId) || {};
@@ -324,6 +355,12 @@ const SettingsPanel = {
         active: $("#cfg-agent-active").value,
         desktop: $("#cfg-desktop-on").checked,
         cli,
+      },
+      persona: {
+        name: $("#cfg-p-name").value,
+        address: $("#cfg-p-address").value,
+        identity: $("#cfg-p-identity").value,
+        extra: $("#cfg-p-extra").value,
       },
       keys,
     };
@@ -455,6 +492,15 @@ function setupSettings() {
   document.querySelectorAll(".cfg-tabs button").forEach((b) => {
     b.addEventListener("click", () => SettingsPanel.showTab(b.dataset.tab));
   });
+  // 顶部模式切换条：改了立刻切到对应页签，让"当前生效的是哪条"一眼可见
+  document.querySelectorAll("#cfg-modebar button").forEach((b) => {
+    b.addEventListener("click", () => {
+      SettingsPanel.data.mode = b.dataset.mode;
+      SettingsPanel.renderMode();
+      SettingsPanel.showTab(b.dataset.mode === "full" ? "full" : "half");
+      SettingsPanel.setStatus("已切到" + (b.dataset.mode === "full" ? "全双工" : "半双工") + "，记得点保存");
+    });
+  });
   $("#cfg-llm-type").addEventListener("change", () => SettingsPanel.onLLMType());
   $("#cfg-llm-preset").addEventListener("change", () => SettingsPanel.onLLMPreset());
   $("#cfg-tts-provider").addEventListener("change", () => SettingsPanel.onTTSProvider());
@@ -463,6 +509,15 @@ function setupSettings() {
     const f = SettingsPanel.data.full || {};
     const p = (f.providers || []).find((x) => x.id === $("#cfg-full-provider").value) || {};
     SettingsPanel.fillSelect($("#cfg-full-model"), p.models || [], (p.models || [])[0] || "");
+  });
+  $("#cfg-p-default").addEventListener("click", () => {
+    $("#cfg-p-identity").value = (SettingsPanel.data.persona || {}).default_identity || "";
+    $("#cfg-p-note").textContent = "已填入内置人设，可以在这上面改";
+  });
+  $("#cfg-p-clear").addEventListener("click", () => {
+    $("#cfg-p-identity").value = "";
+    $("#cfg-p-extra").value = "";
+    $("#cfg-p-note").textContent = "保存后回到内置人设";
   });
   return SettingsPanel;
 }

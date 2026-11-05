@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import copy
 
-from . import catalog
+from . import catalog, persona
 
 SCHEMA_VERSION = 3
 
@@ -268,9 +268,12 @@ def resolve(conf: dict) -> dict:
 
     # 全双工开着时，半双工的 LLM / ASR 不参与（TTS 也不说话，全双工自己出声）
     active_full = mode == "full"
+    system = persona.effective(conf.get("persona"))
     return {
         "conf": conf,
         "mode": mode,
+        "system": system,
+        "persona": persona.snapshot(conf.get("persona")),
         "llm": llm,
         "tts": tts,
         "asr": asr if not active_full else {**asr, "enabled": False, "suppressed": True},
@@ -294,19 +297,23 @@ def resolve(conf: dict) -> dict:
 
 def _llm_config(sel: dict) -> dict:
     kind = sel.get("type") or "demo"
+    # 老配置里的 openai/anthropic/gemini 映射到新的接口名
+    kind = _TYPE_ALIASES.get(kind, kind)
     preset = next((p for p in catalog.LLM_PRESETS if p["id"] == sel.get("preset")), {})
-    type_row = catalog.provider("llm_type", kind) or catalog.provider("llm_type", "openai")
+    type_row = catalog.provider("llm_type", kind) or catalog.provider("llm_type", "completions")
     base = sel.get("base_url") or preset.get("base_url") or type_row.get("default_base", "")
     model = sel.get("model") or preset.get("model", "")
     key_env = sel.get("api_key_env") or ("" if kind == "demo" else
                                          preset.get("api_key_env")
-                                         or ("ANTHROPIC_API_KEY" if kind == "anthropic"
-                                             else "GEMINI_API_KEY" if kind == "gemini"
-                                             else "OPENAI_API_KEY"))
+                                         or _DEFAULT_KEY_ENV.get(kind, "OPENAI_API_KEY"))
     return {"type": kind, "label": preset.get("label") or type_row.get("label", kind),
             "base_url": base, "model": model, "api_key_env": key_env,
             "preset": sel.get("preset") or kind,
             "models": preset.get("models") or ([model] if model else [])}
+
+
+_TYPE_ALIASES = {"openai": "completions", "anthropic": "messages", "gemini": "generateContent"}
+_DEFAULT_KEY_ENV = {"messages": "ANTHROPIC_API_KEY", "generateContent": "GEMINI_API_KEY"}
 
 
 def _tts_config(sel: dict) -> dict:
@@ -401,18 +408,20 @@ def _default_cmd(agent_id: str) -> list[str]:
 def legacy_brain_config(resolved: dict) -> dict:
     """给 Avatar 用的 ``brains`` 字典（保持老构造函数不变）。"""
     llm = resolved["llm"]
-    if llm["type"] == "demo":
-        return {"demo": {"type": "demo", "label": "演示（离线）"}}
-    key = llm.get("preset") if llm.get("preset") not in ("openai", "anthropic", "gemini", "") \
-        else llm["type"]
-    if llm["type"] == "anthropic":
-        return {key: {"type": "anthropic", "label": llm["label"], "model": llm["model"],
-                      "api_key_env": llm["api_key_env"]}}
-    if llm["type"] == "gemini":
-        return {key: {"type": "gemini", "label": llm["label"], "model": llm["model"],
-                      "api_key_env": llm["api_key_env"]}}
-    return {key: {"type": "openai", "label": llm["label"], "base_url": llm["base_url"],
-                  "model": llm["model"], "api_key_env": llm["api_key_env"]}}
+    system = resolved.get("system") or ""
+    common = {"system": system} if system else {}
+    kind = llm.get("type") or "demo"
+    if kind == "demo":
+        return {"demo": {"type": "demo", "label": "演示（离线）", **common}}
+    # 大脑适配器认识的是接口类型，不是预设名
+    key = kind
+    extra = {"label": llm.get("label"), "model": llm.get("model"),
+             "api_key_env": llm.get("api_key_env"), **common}
+    if kind == "generateContent":
+        return {key: {"type": kind, **extra}}
+    if kind == "messages":
+        return {key: {"type": kind, **extra}}
+    return {key: {"type": kind, "base_url": llm.get("base_url", ""), **extra}}
 
 
 def compat(resolved: dict) -> dict:
@@ -433,6 +442,8 @@ def compat(resolved: dict) -> dict:
             "model": full["model"], "api_key_env": full["api_key_env"],
             "voice": full["voice"], "vad_threshold": full["vad_threshold"],
             "silence_duration_ms": full["silence_duration_ms"], "tools": full["tools"],
+            # 全双工也用人设；页面上改过人设时这里给完整文本，没改就用内置常量
+            "persona_text": resolved.get("system") or "",
             "input_sample_rate": 16000, "output_sample_rate": 24000,
         },
         "agents": {

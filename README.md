@@ -62,11 +62,12 @@ set DEEPSEEK_API_KEY=sk-...          # PowerShell: $env:DEEPSEEK_API_KEY="sk-...
 
 调试快捷键：`Enter` 聚焦输入框，`Esc` 打断，数字键 `1`~`7` 切表情，字母键 `n s h j d t g w f x` 做动作。
 
-控制台右侧的 **设置** 按钮打开配置面板，五个页签：
+控制台右侧的 **设置** 按钮打开配置面板：
 
-- **模式**：全双工 / 半双工二选一，选完自动跳到对应的配置页；
+- 顶部常驻 **全双工 / 半双工** 切换条，当前模式高亮；不在用的那一页会醒目标注"不会生效"；
 - **半双工**：LLM（接口类型 + 预设 + base_url + 模型 + key 变量）、TTS（可点"试听这句"）、ASR；
 - **全双工**：服务商、模型、音色；
+- **人设**：名字、怎么称呼你、"她是谁/怎么说话"（留空用内置）、额外要求；固定规则只读展示；
 - **Agent**：自动挑一个 / 只用指定的一个、三个 CLI 各自用哪个模型、"允许操作桌面"开关；
 - **密钥**：填各平台的 key，立即生效。
 
@@ -133,14 +134,17 @@ LLM 配置里存的是通用四件套，**不绑定服务商**：
 }
 ```
 
-| `type` | 接口形态 | 能吃谁 |
+| `type` | 线协议 | 能吃谁 |
 |---|---|---|
-| `openai` | `/chat/completions` | DeepSeek、通义、Kimi、智谱、硅基流动、Ollama、vLLM、LM Studio、one-api… |
-| `anthropic` | Anthropic Messages | Claude 官方（需 `pip install anthropic`） |
-| `gemini` | `generateContent` | Google Gemini |
+| `completions` | `POST /chat/completions` | DeepSeek、通义、Kimi、智谱、硅基流动、Ollama、vLLM、LM Studio、one-api… |
+| `responses` | `POST /responses` | OpenAI 新接口（DashScope 等网关也已支持） |
+| `messages` | Anthropic Messages | Claude 官方（需 `pip install anthropic`） |
+| `generateContent` | Google 原生 | Gemini，不属于上面三类，单独适配 |
+| `demo` | 无 | 离线演示，台词写死 |
 
-预设（DeepSeek / 通义 / Kimi / 智谱 / 硅基流动 / Claude / Gemini / Ollama / 演示）只是帮页面把
-`base_url` / `model` / `api_key_env` 一次填好；你不选预设、直接填这四项也能用，改过任何一项就自动算作自定义。
+预设（DeepSeek / 通义 / Kimi / 智谱 / 硅基流动 / OpenAI / Claude / Gemini / Ollama / 演示）只是帮页面把
+`base_url` / `model` / `api_key_env` 一次填好；不选预设、直接填这几项也能用，改过任何一项就自动算作自定义。
+页面会按接口类型隐藏用不到的字段（比如 `demo` 只留接口和预设）。
 
 TTS / ASR 也按接口形态分：
 
@@ -152,6 +156,21 @@ TTS / ASR 也按接口形态分：
 - 缺 key 时页面显示"（缺 key）"，聊天自动退回离线演示。
 - 换 TTS 引擎时音色自动切到该引擎自己的表里（不会拿旧引擎的音色名去合成）。
 - ASR 走 `POST /api/asr`，整段录音上传（webm/ogg/wav/mp3 都认），识别结果当成一次普通输入。
+
+### 人设
+
+页面 **设置 → 人设** 里可以改：
+
+| 项 | 说明 |
+|---|---|
+| 名字 | 显示用的名字（默认「鱼丫丫」） |
+| 称呼你 | 她怎么称呼用户 |
+| 她是谁 · 怎么说话 | 整段人设正文；**留空就用内置**，点「填入内置人设」可以拿它当底稿改 |
+| 额外要求 | 加在末尾的补充（口癖、禁忌、风格） |
+| 固定规则 | 字幕长度、标签用法、记忆标记这些链路约定，只读，保证改人设不会把协议写坏 |
+
+保存后下一次对话（或下一次全双工连接）就生效。配置存在 `config.json` 的 `persona` 段，
+三项都空时完全等价于内置人设，不会因为多一层拼接而改变行为。
 
 ### ③ Agent：自己挑一个，还是只用一个
 
@@ -212,6 +231,10 @@ TTS / ASR 也按接口形态分：
 `[nod]` `[shake]` `[hop]` `[jump]` `[droop]` `[tremble]` `[tilt]` `[wiggle]` `[sniff]` `[sigh]` `[startle]` `[lean]`
 
 也认中文别名（`[点头]` `[歪头]` `[抽鼻子]` `[叹气]`……）。markdown、代码块会被清洗掉，不会出现在字幕里。
+
+**情绪没带动作时，服务端会补一个配套的小动作**（开心→蹦、惊讶→吓一跳、难过→垂头、害羞/思考→歪头、
+生气→发抖），所以立绘不会只有脸在变。模型自己写了动作标签就不补，尊重它的选择（映射表在
+`server/protocol.py` 的 `EMOTION_MOTION`）。
 
 ## 记忆
 
@@ -502,7 +525,7 @@ python tools/build_assets.py           # 抠像、对齐、切贴片、检测屏
 ```
 server/            FastAPI 服务：app.py（API/会话）、protocol.py（标签/人设/清洗）、memory.py（上下文+长期记忆）、
                    catalog.py（能力目录：可选提供方 / 音色 / CLI 自动探测）、configure.py（三层配置解析与迁移）、
-                   settings.py（页面设置的读写）、asr.py（语音识别）、
+                   persona.py（人设：默认 + 页面覆盖）、settings.py（页面设置的读写）、asr.py（语音识别）、
                    brains/（大脑适配器）、intent.py（动作意图分流）、actions.py（动作执行的兼容外壳）、tts.py（本机语音合成）、
                    io/（输入输出适配层：inputs/、outputs/、tts/、dispatcher、turn、bus）、
                    realtime/（Qwen-Audio-Realtime 全双工运行时 + 工具）、

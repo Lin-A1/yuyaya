@@ -41,6 +41,21 @@ def test_tts() -> None:
     check("本机 TTS", wav[:4] == b"RIFF" and len(wav) > 1000, f"{len(wav)} bytes")
 
 
+def _brains_ok() -> bool:
+    """四种接口的大脑适配器都能构建出来（不真的发请求）。"""
+    try:
+        from server.brains import build_brain
+    except Exception:
+        return False
+    for kind in ("completions", "responses", "messages", "generateContent", "demo"):
+        try:
+            b = build_brain(kind, {"type": kind, "model": "m", "api_key_env": "NOPE_KEY"})
+            b.availability()
+        except Exception:
+            return False
+    return True
+
+
 def test_api() -> None:
     try:
         from fastapi.testclient import TestClient
@@ -130,16 +145,22 @@ def test_api() -> None:
             check("全双工音色表有平台预置音色",
                   len(st["full"]["voices"]) > 5 and st["full"]["voice"] == "qiaoxiaojiao_v3.1",
                   str(st["full"]["voice"]))
-            check("LLM 只认三类通用接口",
-                  [t["id"] for t in st["llm"]["types"]] == ["openai", "anthropic", "gemini"],
+            check("LLM 只认三种线协议 + 离线演示",
+                  [t["id"] for t in st["llm"]["types"]] ==
+                  ["completions", "responses", "messages", "generateContent", "demo"],
                   str([t["id"] for t in st["llm"]["types"]]))
-            check("预设带各自的模型表",
-                  all("models" in p for p in st["llm"]["presets"])
+            check("预设带各自的模型表和接口类型",
+                  all("models" in p and "type" in p for p in st["llm"]["presets"])
                   and any(p["id"] == "deepseek" for p in st["llm"]["presets"]),
-                  str([(p["id"], len(p["models"])) for p in st["llm"]["presets"]]))
+                  str([(p["id"], p["type"]) for p in st["llm"]["presets"]]))
+            check("四种大脑适配器都能构建",
+                  _brains_ok(), "")
             check("模式是二选一（full / half）",
                   [m["id"] for m in st["modes"]] == ["full", "half"],
                   str([m["id"] for m in st["modes"]]))
+            check("人设可在设置里改（有默认值和自定义标记）",
+                  st["persona"]["default_identity"] and "customized" in st["persona"],
+                  str(list(st["persona"]))[:100])
             check("ASR 可选 none（不启用语音输入）",
                   any(p["id"] == "none" for p in st["asr"]["providers"]),
                   str([p["id"] for p in st["asr"]["providers"]]))
@@ -173,19 +194,19 @@ def test_api() -> None:
 
             # 切 LLM：通用三件套，活跃大脑跟着换
             r = client.post("/api/settings", json={"llm": {
-                "preset": "qwen", "type": "openai", "model": "qwen-plus",
+                "preset": "qwen", "type": "completions", "model": "qwen-plus",
                 "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
                 "api_key_env": "DASHSCOPE_API_KEY"}})
             changed = r.json().get("changed") or {}
             check("切 LLM 会同时更新活跃大脑",
                   changed.get("llm.preset") == "qwen"
-                  and client.app.state.avatar.active == "qwen", str(changed))
+                  and client.app.state.avatar.active == "completions", str(changed))
             check("LLM 存的是通用四件套（不是服务商）",
-                  r.json()["llm"]["type"] == "openai"
-                  and r.json()["llm"]["model"] == "qwen-plus", str(r.json()["llm"]))
+                  r.json()["llm"]["type"] == "completions"
+                  and r.json()["llm"]["model"] == "qwen-plus", str(r.json()["llm"])[:120])
             # 直接填 base_url 换一个没预设过的服务商也能用
             r = client.post("/api/settings", json={"llm": {
-                "type": "openai", "base_url": "https://example.invalid/v1",
+                "type": "completions", "base_url": "https://example.invalid/v1",
                 "model": "some-model", "api_key_env": "SOME_KEY"}})
             d = r.json()["llm"]
             check("能配任意的 OpenAI 兼容服务商",

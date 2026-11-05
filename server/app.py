@@ -41,7 +41,8 @@ from .io import (EventBus, InputDispatcher, InputError, Turn, TurnManager,
 from .memory import Session
 from .asr import ASRError as asr_error
 from .asr import transcribe as asr_transcribe
-from .protocol import EMOTION_CN, EMOTIONS, MOTIONS, SpeechStream, normalize_emotion, normalize_motion
+from .protocol import (EMOTION_CN, EMOTIONS, MOTIONS, SpeechStream, motion_for_emotion,
+                       normalize_emotion, normalize_motion)
 from .realtime import RealtimeRuntime
 from .settings import Settings
 
@@ -130,9 +131,18 @@ class Avatar:
     def _emit(self, turn: Turn, events: list[dict], ch: str = "main") -> None:
         if turn.stale:
             return
-        for e in events:
+        # 模型经常只给情绪、不给动作。情绪变化时补一个配套的小动作，
+        # 但同一句里模型自己写了动作就不补（尊重它的选择）。
+        has_motion = any(e["op"] == "motion" for e in events)
+        for i, e in enumerate(events):
             if e["op"] == "emotion":
                 self.hub.set_emotion(e["name"])
+                if not has_motion:
+                    motion = motion_for_emotion(e["name"])
+                    if motion:
+                        self.hub.publish({"type": "speech", "id": turn.id, "turn": turn.id,
+                                          "session": turn.session, "ch": ch,
+                                          "op": "motion", "name": motion}, turn=turn)
             elif e["op"] == "memory":
                 if self.session.add_fact(e["text"]):
                     self.session.save()
@@ -340,6 +350,8 @@ def create_app() -> FastAPI:
         realtime.model = new_rt["realtime"].get("model") or realtime.model
         realtime.voice = new_rt["realtime"].get("voice") or realtime.voice
         realtime.api_key_env = new_rt["realtime"].get("api_key_env") or realtime.api_key_env
+        # 人设改了要重新拼 instructions（下一次连接就生效）
+        realtime.base_instructions = realtime.build_instructions()
         applied.append(f"mode={'full' if realtime.enabled else 'half'}")
 
         # Agent：模式 / 路由 / 默认后端走 new_rt["agents"]（已含 mode/active）

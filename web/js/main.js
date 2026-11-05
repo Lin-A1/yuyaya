@@ -89,13 +89,13 @@ async function createASR(params) {
     onText: () => {},
     onState: () => {},
   };
-  if (asr.enabled && asr.provider && asr.provider !== "browser") {
+  if (asr.provider === "none" || asr.enabled === false) return null;
+  if (asr.provider && asr.provider !== "browser") {
     const s = new ServerASRSession(base);
     s.provider = asr.provider;
     if (s.supported) return s;
     console.warn("[asr] 服务端识别需要 MediaRecorder，退回浏览器识别");
   }
-  if (asr.provider === "none" || asr.enabled === false) return null;
   const s = new VoiceSession(base);
   s.provider = "browser";
   return s;
@@ -106,8 +106,15 @@ function setupVoice({ avatar, player, realtime = null, asr = null }) {
   if (!btn) return null;
   if (realtime) {
     const labels = { off: "语音", connecting: "连接中", on: "语音中", denied: "无权限" };
+    const titles = {
+      off: "全双工语音：点一下连实时模型，随时可以插话",
+      connecting: "正在连接实时语音…",
+      on: "全双工中：再点一下断开",
+      denied: "连不上实时语音（看浏览器权限或网络）",
+    };
     const setState = (state) => {
       btn.textContent = labels[state] || "语音";
+      btn.title = titles[state] || "";
       btn.setAttribute("aria-pressed", String(state === "on"));
       btn.dataset.state = state;
     };
@@ -142,7 +149,8 @@ function setupVoice({ avatar, player, realtime = null, asr = null }) {
   if (!asr) {
     btn.disabled = true;
     btn.textContent = "语音";
-    btn.title = "没有启用语音识别，去「设置」里选一个，或直接在下面打字";
+    btn.title = "没有可用的语音输入：去「设置 → 半双工」选一个 ASR，或直接打字";
+    btn.onclick = () => { SettingsPanel.open(); SettingsPanel.showTab("half"); };
     return null;
   }
   const labels = { off: "语音", listening: "聆听中", speech: "在听", heard: "处理中",
@@ -171,8 +179,7 @@ function setupVoice({ avatar, player, realtime = null, asr = null }) {
     return asr;
   }
   btn.title = asr.provider === "qwen" ? `语音输入（${asr.provider} 服务端识别）`
-                                      : "语音输入（浏览器识别）";
-  btn.addEventListener("click", async () => {
+                                      : "语音输入（浏览器识别）";  btn.addEventListener("click", async () => {
     try {
       if (asr.active) asr.stop();
       else await asr.start();

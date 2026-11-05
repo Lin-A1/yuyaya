@@ -14,7 +14,7 @@ import json
 import os
 import pathlib
 
-from . import catalog
+from . import catalog, persona
 
 SECRETS_NAME = "secrets.json"
 
@@ -25,6 +25,13 @@ def mask(value: str) -> str:
     if len(value) <= 8:
         return "****"
     return f"{value[:3]}…{value[-4:]}"
+
+
+def _persona_rules() -> str:
+    """只读的协议规则：从内置人设里摘出"输出规则"那一段给页面展示。"""
+    full = persona.DEFAULT_IDENTITY
+    i = full.find("【输出规则")
+    return full[i:] if i >= 0 else full[-600:]
 
 
 class Settings:
@@ -134,8 +141,11 @@ class Settings:
             },
             "llm": {
                 "type": llm.get("type") or "demo",
+                # 免 key 的离线演示也放进类型表，用户能单独选它
                 "types": [{"id": t["id"], "label": t["label"], "note": t.get("note", ""),
-                           "default_base": t.get("default_base", "")} for t in catalog.LLM_TYPES],
+                           "default_base": t.get("default_base", "")} for t in catalog.LLM_TYPES]
+                + [{"id": "demo", "label": "离线演示（不联网）", "note": "台词写死，用来调形象。",
+                    "default_base": ""}],
                 "preset": preset_id,
                 "presets": [{"id": p["id"], "label": p["label"], "type": p["type"],
                              "base_url": p.get("base_url", ""), "model": p.get("model", ""),
@@ -182,6 +192,8 @@ class Settings:
                 "backends": backends,
             },
             "keys": self.key_status(),
+            "persona": persona.snapshot(self.conf.get("persona")),
+            "persona_rules": _persona_rules(),
             "secrets_path": str(self.secrets_path),
         }
 
@@ -324,6 +336,17 @@ class Settings:
             if "model" in spec:
                 row["model"] = str(spec["model"])
                 changed[f"agents.cli.{aid}.model"] = row["model"]
+
+        # 人设
+        pn = body.get("persona") if isinstance(body.get("persona"), dict) else {}
+        if pn:
+            cur_p = self.conf.setdefault("persona", {})
+            for key in ("name", "identity", "address", "extra"):
+                if key in pn:
+                    val = str(pn[key] or "").strip()
+                    # 空的 identity/extra 存成空串（= 用内置默认），不留一堆空白
+                    cur_p[key] = val
+                    changed[f"persona.{key}"] = val[:20]
 
         # key
         keys = body.get("keys") if isinstance(body.get("keys"), dict) else {}

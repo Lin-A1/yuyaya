@@ -28,6 +28,25 @@ ALIASES = {
 MOTIONS = ["nod", "shake", "hop", "jump", "droop", "tremble", "tilt", "wiggle", "sniff",
            "sigh", "startle", "lean"]
 
+# 模型常常只给情绪标签、不写动作标签。情绪变化时补一个"配套的小动作"，
+# 让立绘真的动起来；只在紧接着没有动作的情况下补，不会盖掉模型自己的选择。
+EMOTION_MOTION = {
+    "happy": "hop",
+    "surprised": "startle",
+    "sad": "droop",
+    "angry": "tremble",
+    "shy": "tilt",
+    "thinking": "tilt",
+}
+
+
+def motion_for_emotion(emotion: str, recent: "list | None" = None) -> str | None:
+    """情绪 → 兜底动作。recent 是同一句里已经出现过的 op（有 motion 就别补）。"""
+    if recent and any(e.get("op") == "motion" for e in recent):
+        return None
+    return EMOTION_MOTION.get(emotion)
+
+
 MOTION_ALIASES = {
     "点头": "nod", "摇头": "shake", "蹦": "hop", "蹦跶": "hop", "跳": "jump", "跳起来": "jump",
     "垂头": "droop", "耷拉": "droop", "发抖": "tremble", "抖": "tremble", "歪头": "tilt", "扭": "wiggle",

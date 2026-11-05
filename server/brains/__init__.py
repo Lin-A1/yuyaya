@@ -39,19 +39,21 @@ class Brain:
         kind = c.get("type", self.kind)
         if kind == "demo":
             return True, ""
-        if kind in ("openai", "anthropic", "gemini"):
-            if kind == "anthropic":
+        if kind in ("openai", "completions", "responses", "anthropic", "messages",
+                    "gemini", "generateContent"):
+            if kind in ("anthropic", "messages"):
                 import importlib.util
                 if importlib.util.find_spec("anthropic") is None:
                     return False, "需要 pip install anthropic"
             if c.get("api_key"):
                 return True, ""
-            env = c.get("api_key_env") or ("ANTHROPIC_API_KEY" if kind == "anthropic"
-                                           else "GEMINI_API_KEY" if kind == "gemini" else "")
+            env = c.get("api_key_env") or ("ANTHROPIC_API_KEY" if kind in ("anthropic", "messages")
+                                           else "GEMINI_API_KEY" if kind in ("gemini", "generateContent")
+                                           else "")
             if env:
                 if os.environ.get(env):
                     return True, ""
-                if kind == "anthropic" and os.environ.get("ANTHROPIC_AUTH_TOKEN"):
+                if kind in ("anthropic", "messages") and os.environ.get("ANTHROPIC_AUTH_TOKEN"):
                     return True, ""       # 走代理 / 网关时用的令牌
                 return False, f"需要设置环境变量 {env}"
             # 没配 key 的：本地服务（Ollama / vLLM / LM Studio）不需要，但得看它开没开
@@ -94,14 +96,18 @@ class Brain:
 
 def build_brain(name: str, conf: dict) -> Brain:
     from .openai_compat import OpenAICompatBrain
+    from .responses import ResponsesBrain
     from .anthropic_api import AnthropicBrain
     from .gemini import GeminiBrain
     from .cli import CLIBrain
     from .demo import DemoBrain
 
-    kinds = {"openai": OpenAICompatBrain, "anthropic": AnthropicBrain,
-             "gemini": GeminiBrain, "cli": CLIBrain, "demo": DemoBrain}
+    kinds = {"completions": OpenAICompatBrain, "openai": OpenAICompatBrain,
+             "responses": ResponsesBrain,
+             "messages": AnthropicBrain, "anthropic": AnthropicBrain,
+             "generateContent": GeminiBrain, "gemini": GeminiBrain,
+             "cli": CLIBrain, "demo": DemoBrain}
     kind = conf.get("type", "demo")
     if kind not in kinds:
-        raise ValueError(f"brain {name}: unknown type {kind!r}, expected one of {list(kinds)}")
+        raise ValueError(f"brain {name}: unknown type {kind!r}, 可选 {list(kinds)}")
     return kinds[kind](name, conf)

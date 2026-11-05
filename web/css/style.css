@@ -220,6 +220,22 @@ body.obs { background: transparent; }
 }
 .cfg-close:hover { background: rgba(255, 255, 255, .1); }
 
+/* 顶部模式切换条 */
+.cfg-modebar {
+  display: flex; gap: 2px; margin-right: 12px;
+  background: rgba(255, 255, 255, .06); border-radius: 8px; padding: 3px;
+}
+.cfg-modebar button {
+  font: inherit; font-size: 12px; cursor: pointer; padding: 5px 13px;
+  color: #9fb0aa; background: transparent; border: 0; border-radius: 6px;
+}
+.cfg-modebar button:hover { color: #d8e4df; }
+.cfg-modebar button.on {
+  color: #101513; background: #7fe1b2; font-weight: 600;
+}
+.cfg-lead--warn { color: #ffce7a; opacity: .95; }
+.cfg-lead--warn::before { content: ""; }
+
 /* 页签 */
 .cfg-tabs { display: flex; gap: 4px; margin-bottom: 4px; border-bottom: 1px solid rgba(255, 255, 255, .12); }
 .cfg-tabs button {
@@ -256,6 +272,7 @@ body.obs { background: transparent; }
 .cfg-card h4:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
 
 .cfg-row { display: flex; align-items: center; gap: 10px; margin: 7px 0; }
+.cfg-row[hidden] { display: none; }
 .cfg-row > span { width: 88px; flex: none; opacity: .8; }
 .cfg-row--sub { margin-left: 26px; }
 .cfg-row--sub > span { width: 62px; font-size: 12px; }
@@ -291,11 +308,12 @@ body.obs { background: transparent; }
 .cfg-actions { display: flex; align-items: center; gap: 10px; margin: 10px 0 0 98px; }
 .cfg-actions small { font-size: 11px; opacity: .62; }
 
-.cfg-card button:not(.cfg-close):not(.cfg-tabs button) {
+/* 默认绿底只给"主操作"按钮；页签、模式条、关闭角标保持各自样式 */
+.cfg-card button:not(.cfg-close):not(.cfg-tabs button):not(.cfg-modebar button) {
   font: inherit; font-size: 13px; cursor: pointer; color: #101513;
   background: #7fe1b2; border: 0; border-radius: 7px; padding: 7px 14px;
 }
-.cfg-card button:hover:not(.cfg-close) { background: #93ecc2; }
+.cfg-card button:hover:not(.cfg-close):not(.cfg-modebar button):not(.cfg-tabs button) { background: #93ecc2; }
 .cfg-card button:disabled { opacity: .45; cursor: default; }
 .cfg-card .cfg-test, .cfg-card #cfg-refresh {
   background: rgba(168, 240, 198, .2); color: #d8f5e6;
@@ -323,6 +341,19 @@ body.obs { background: transparent; }
   background: rgba(255, 120, 120, .16); color: #ffc9c9;
 }
 .cfg-card .cfg-key .cfg-clear:hover { background: rgba(255, 120, 120, .28); }
+
+.cfg-textarea {
+  width: 100%; font: inherit; font-size: 12.5px; line-height: 1.7; color: #e8ece9;
+  background: rgba(255, 255, 255, .06); border: 1px solid rgba(255, 255, 255, .16);
+  border-radius: 8px; padding: 9px 11px; outline: none; resize: vertical;
+}
+.cfg-textarea:focus { border-color: rgba(168, 240, 198, .6); }
+.cfg-pre {
+  max-height: 130px; overflow-y: auto; white-space: pre-wrap; font-size: 11px;
+  line-height: 1.6; opacity: .55; background: rgba(255, 255, 255, .03);
+  border-radius: 7px; padding: 9px 11px; margin: 0;
+}
+.cfg-actions--left { margin-left: 0; flex-wrap: wrap; }
 
 .cfg-card footer {
   display: flex; align-items: center; gap: 10px; padding: 12px 0 14px;

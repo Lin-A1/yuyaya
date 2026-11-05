@@ -122,59 +122,72 @@ FULL_PROVIDERS = [
     },
 ]
 
-# ---------------------------------------------------------------- LLM：三类通用接口
-
+# ---------------------------------------------------------------- LLM：按接口形态分
+#
+# 只认三种"线协议"，服务商只是填表用的预设：
+#   completions  /chat/completions（OpenAI 兼容，最普遍）
+#   responses    /v1/responses（OpenAI Responses API）
+#   messages     Anthropic Messages（Claude）
+# 其他不兼容这几类的（如 Google 原生 generateContent）走单独的适配器。
 LLM_TYPES = [
     {
-        "id": "openai", "label": "OpenAI 兼容接口",
+        "id": "completions", "label": "Chat Completions（OpenAI 兼容）",
         "fields": ["base_url", "model", "api_key_env"],
         "default_base": "https://api.deepseek.com",
-        "note": "绝大多数服务商都提供这个接口：DeepSeek、通义、Kimi、智谱、硅基流动、"
-                "Ollama、vLLM、LM Studio、Gemini 兼容端点…",
+        "note": "最常见：DeepSeek、通义、Kimi、智谱、硅基流动、Ollama、vLLM、LM Studio、one-api…",
     },
     {
-        "id": "anthropic", "label": "Anthropic Messages",
+        "id": "responses", "label": "Responses API",
+        "fields": ["base_url", "model", "api_key_env"],
+        "default_base": "https://api.openai.com/v1",
+        "note": "OpenAI 新的 /responses 接口；部分网关也开始支持。",
+    },
+    {
+        "id": "messages", "label": "Messages（Anthropic）",
         "fields": ["model", "api_key_env"],
         "default_base": "https://api.anthropic.com",
         "note": "Claude 官方接口（需要 pip install anthropic）。",
     },
     {
-        "id": "gemini", "label": "Google Gemini",
+        "id": "generateContent", "label": "generateContent（Google 原生）",
         "fields": ["model", "api_key_env"],
         "default_base": "https://generativelanguage.googleapis.com",
-        "note": "Google 原生 generateContent 接口。",
+        "note": "Google Gemini 原生接口，不属于上面三类，单独适配。",
     },
 ]
 
-# 只是帮页面快速填表的预设，配置里存的是上面那四个通用字段
+# 只是帮页面快速填表的预设，配置里存的是 type + base_url + model + api_key_env
 LLM_PRESETS = [
-    {"id": "deepseek", "label": "DeepSeek", "type": "openai",
+    {"id": "deepseek", "label": "DeepSeek", "type": "completions",
      "base_url": "https://api.deepseek.com", "model": "deepseek-chat",
      "api_key_env": "DEEPSEEK_API_KEY", "models": ["deepseek-chat", "deepseek-reasoner"]},
-    {"id": "qwen", "label": "通义千问", "type": "openai",
+    {"id": "qwen", "label": "通义千问", "type": "completions",
      "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1", "model": "qwen-plus",
      "api_key_env": "DASHSCOPE_API_KEY",
      "models": ["qwen-plus", "qwen-max", "qwen-turbo", "qwen3-max"]},
-    {"id": "kimi", "label": "Kimi", "type": "openai",
+    {"id": "kimi", "label": "Kimi", "type": "completions",
      "base_url": "https://api.moonshot.cn/v1", "model": "moonshot-v1-8k",
      "api_key_env": "MOONSHOT_API_KEY",
      "models": ["moonshot-v1-8k", "moonshot-v1-32k", "kimi-k3"]},
-    {"id": "zhipu", "label": "智谱 GLM", "type": "openai",
+    {"id": "zhipu", "label": "智谱 GLM", "type": "completions",
      "base_url": "https://open.bigmodel.cn/api/paas/v4", "model": "glm-4-plus",
      "api_key_env": "ZHIPU_API_KEY", "models": ["glm-4-plus", "glm-4-flash"]},
-    {"id": "siliconflow", "label": "硅基流动", "type": "openai",
+    {"id": "siliconflow", "label": "硅基流动", "type": "completions",
      "base_url": "https://api.siliconflow.cn/v1", "model": "Qwen/Qwen2.5-72B-Instruct",
      "api_key_env": "SILICONFLOW_API_KEY",
      "models": ["Qwen/Qwen2.5-72B-Instruct", "deepseek-ai/DeepSeek-V3"]},
-    {"id": "claude", "label": "Claude API", "type": "anthropic",
+    {"id": "openai", "label": "OpenAI", "type": "responses",
+     "base_url": "https://api.openai.com/v1", "model": "gpt-5",
+     "api_key_env": "OPENAI_API_KEY", "models": ["gpt-5", "gpt-5-mini", "gpt-4.1"]},
+    {"id": "claude", "label": "Claude API", "type": "messages",
      "base_url": "https://api.anthropic.com", "model": "claude-opus-5-5",
      "api_key_env": "ANTHROPIC_API_KEY",
      "models": ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"]},
-    {"id": "gemini", "label": "Google Gemini", "type": "gemini",
+    {"id": "gemini", "label": "Google Gemini", "type": "generateContent",
      "base_url": "https://generativelanguage.googleapis.com", "model": "gemini-2.5-flash",
      "api_key_env": "GEMINI_API_KEY",
      "models": ["gemini-2.5-pro", "gemini-2.5-flash"]},
-    {"id": "ollama", "label": "Ollama（本机）", "type": "openai",
+    {"id": "ollama", "label": "Ollama（本机）", "type": "completions",
      "base_url": "http://127.0.0.1:11434/v1", "model": "qwen2.5:7b", "api_key_env": "",
      "models": ["qwen2.5:7b", "qwen2.5:14b", "llama3.1:8b"]},
     {"id": "demo", "label": "离线演示", "type": "demo",
