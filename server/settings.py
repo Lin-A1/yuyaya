@@ -1,6 +1,6 @@
 """页面设置：通道化配置的读写。
 
-四个通道形状一致：**厂商 + API 格式 + Base URL + API Key + 模型列表（选一个）**
+四个通道形状一致：**接口类型 + Base URL + API Key + 模型列表（选一个）**
 
     voice.half.llm / voice.half.tts / voice.half.asr / voice.full
 
@@ -19,10 +19,13 @@ import json
 import os
 import pathlib
 
-from . import catalog, persona
+from . import catalog, configure, persona
 
 SECRETS_NAME = "secrets.json"
 CHANNELS = ("llm", "tts", "asr", "full")
+
+
+_TYPE_ALIAS = {"openai": "completions", "anthropic": "messages", "gemini": "generateContent"}
 
 
 def mask(value: str) -> str:
@@ -103,41 +106,17 @@ class Settings:
 
     # ---------------------------------------------------------------- 读
     def snapshot(self, runtime: dict | None = None) -> dict:
-        runtime = runtime or {}
-        backends = runtime.get("agents", {}).get("backends") or []
         voice = self.conf.get("voice") or {}
         half = voice.get("half") or {}
-        agents = self.conf.get("agents") or {}
-        cli_sel = agents.get("cli") or {}
-
-        clis = []
-        for spec in catalog.CLI_AGENTS:
-            st = catalog.cli_status(spec)
-            sel = cli_sel.get(spec["id"]) or {}
-            st["model"] = sel["model"] if "model" in sel else ""
-            st["auto_model"] = st.get("default_model") or ""
-            st["enabled"] = sel.get("enabled", True) is not False
-            st["active"] = bool(st["enabled"] and st["installed"]
-                                and spec["id"] in backends)
-            clis.append(st)
 
         return {
-            "version": self.conf.get("version", 3),
+            "version": self.conf.get("version", configure.SCHEMA_VERSION),
             "mode": self.conf.get("mode") or "half",
             "llm": self._channel("llm", half.get("llm") or {}, catalog.LLM_PRESETS,
                                  catalog.LLM_TYPES),
             "tts": self._channel("tts", half.get("tts") or {}, catalog.TTS_PROVIDERS, None),
             "asr": self._channel("asr", half.get("asr") or {}, catalog.ASR_PROVIDERS, None),
             "full": self._channel("full", voice.get("full") or {}, catalog.FULL_PROVIDERS, None),
-            "agents": {
-                "enabled": bool(agents.get("enabled", True)),
-                "mode": agents.get("mode") or "auto",
-                "active": agents.get("active") or "",
-                "max_concurrent": int(agents.get("max_concurrent", 2)),
-                "desktop": bool((agents.get("desktop") or {}).get("enabled", True)),
-                "cli": clis,
-                "backends": backends,
-            },
             "persona": persona.snapshot(self.conf.get("persona")),
             "persona_rules": _persona_rules(),
             "secrets_path": str(self.secrets_path),
@@ -145,75 +124,96 @@ class Settings:
 
     def _channel(self, name: str, sel: dict, presets: list[dict],
                  types: list[dict] | None = None) -> dict:
-        """一个通道的展示数据。"""
-        vendor = (sel.get("vendor") or sel.get("provider") or "").strip()
-        row = next((p for p in presets if p["id"] == vendor), {})
-        default_models = _model_list(row.get("models") or sel.get("models") or [])
-        models = _model_list(sel.get("models")) or default_models
+        """一个通道的展示数据。
+
+        LLM 是通用接口：只有 API 格式 + Base URL + Key + 模型列表，没有"厂商"这一层。
+        TTS / ASR / 全双工按各自适配器（厂商）分。
+        """
+        generic = name in ("llm", "tts", "asr")
+        iface = ""
+        if name in ("tts", "asr"):
+            iface = (sel.get("type") or sel.get("vendor") or sel.get("provider")
+                     or ("qwen-realtime" if name == "tts" else "none")).strip()
+        vendor = "" if generic else (sel.get("vendor") or sel.get("provider") or "").strip()
+        row = ({} if name == "llm" else
+               next((p for p in presets if p["id"] == (iface or vendor)), {}))
+        models = _model_list(sel.get("models")) or _model_list(row.get("models") or [])
         model = (sel.get("model") or "").strip()
+        key = self.key_for(name)
+        base_url = (sel.get("base_url") or row.get("base_url") or "").strip()
+        kind = (sel.get("type") or row.get("type") or "completions").strip()
+        kind = _TYPE_ALIAS.get(kind, kind)
+        if name in ("tts", "asr"):
+            kind = iface
+            if not (sel.get("base_url") or "").strip():
+                base_url = (row.get("default_base") or "").strip()
+        # 列表是空的、但 Base URL + Key 都填了：自动拉一次作为起点（之后以用户保存的为准）
+        if generic and not models and base_url and kind != "demo":
+            models = catalog.fetch_models(base_url, key, kind)
         if model and model not in {m["id"] for m in models}:
             models.insert(0, {"id": model, "label": model})
         if not model and models:
             model = models[0]["id"]
-        key = self.key_for(name)
-        base_url = (sel.get("base_url") or row.get("base_url") or "").strip()
-        # 能连上就问服务商要真实模型列表；拉不到就用配置里已有的。
-        # TTS/ASR 不走 /models（它们用的不是 chat 接口），模型由厂商表声明。
-        if name == "llm" and base_url and key and row.get("list_models", True):
-            live = catalog.fetch_models(base_url, key)
-            if live:
-                ids = {m["id"] for m in live}
-                if model in ids:
-                    live.remove(next(m for m in live if m["id"] == model))
-                    live.insert(0, {"id": model, "label": model})
-                elif model:
-                    live.insert(0, {"id": model, "label": model})
-                models = live
-                if not model:
-                    model = models[0]["id"]
         info = {
-            "vendor": vendor or (presets[0]["id"] if presets else ""),
-            "vendors": [{"id": p["id"], "label": p["label"], "note": p.get("note", ""),
-                         "default_base": p.get("base_url", ""),
-                         "default_models": _model_list(p.get("models") or []),
-                         "key_env": p.get("key_env", "")} for p in presets],
-            "base_url": (sel.get("base_url") or row.get("base_url") or "").strip(),
+            "base_url": base_url,
             "models": models,
             "model": model,
             "has_key": bool(key),
             "key_hint": mask(key),
         }
+        if name in ("tts", "asr"):
+            info["type"] = iface
+            info["local"] = bool(row.get("local"))
+            if name == "asr":
+                info["enabled"] = iface != "none"
+            info["types"] = [{"id": p["id"], "label": p["label"], "note": p.get("note", ""),
+                              "default_base": p.get("default_base", ""),
+                              "default_models": _model_list(p.get("models") or []),
+                              "local": bool(p.get("local")),
+                              "voices": [{"id": i, "label": l} for i, l in p.get("voices") or []],
+                              "voices_by_model": {m: [{"id": i, "label": l} for i, l in tbl]
+                                                  for m, tbl in (p.get("voices_by_model") or {}).items()},
+                              } for p in presets]
+        if name == "llm":
+            ex = sel.get("extra")
+            info["extra"] = ex if isinstance(ex, dict) else {}
+        if not generic:
+            info["vendor"] = vendor or (presets[0]["id"] if presets else "")
+            info["vendors"] = [{"id": p["id"], "label": p["label"], "note": p.get("note", ""),
+                                "default_base": p.get("base_url", ""),
+                                "default_models": _model_list(p.get("models") or []),
+                                "key_env": p.get("key_env", "")} for p in presets]
         if name == "full":
             info["voices"] = [{"id": i, "label": l} for i, l in catalog.QWEN_VOICES]
             info["voice"] = sel.get("voice") or "qiaoxiaojiao_v3.1"
-            info["ready"] = bool(self.conf.get("mode") == "full" and bool(key)
-                                 and info["model"])
         elif name == "tts":
-            # 音色跟着**模型**走：同一个厂商的不同模型（实时朗读 / qwen3-tts）音色表完全不同
+            # 音色跟着**模型**走
             info["voices"] = _voices_for(model, row)
-            info["voice"] = sel.get("voice") or (info["voices"][0]["id"]
-                                                 if info["voices"] else "")
-        if types is not None:
+            info["voice"] = sel.get("voice") or (info["voices"][0]["id"] if info["voices"] else "")
+        if types is not None and name == "llm":
             info["types"] = [{"id": t["id"], "label": t["label"], "note": t.get("note", ""),
-                              "default_base": t.get("default_base", "")} for t in types]
-            info["type"] = sel.get("type") or row.get("type") or "completions"
-        if name == "asr":
-            info["enabled"] = (sel.get("vendor") or sel.get("provider") or "none") != "none"
-            # 用户选的 none 也要在列表里；vendor 列表本身不含 none
-            info["vendors"] = [{"id": "none", "label": "不启用语音输入",
-                                "note": "只能在控制台打字", "default_base": "",
-                                "default_models": [], "key_env": ""}] + [
-                v for v in info["vendors"] if v["id"] != "none"]
-            if info["vendor"] == "none":
-                info["vendor"] = "none"
-        if name == "llm" and not any(v["id"] == "demo" for v in info["vendors"]):
-            # demo 不在预设列表里，补一项，否则下拉选不到当前值
-            info["vendors"] = info["vendors"] + [
-                {"id": "demo", "label": "离线演示（不联网）", "note": "台词写死，用来调形象。",
-                 "default_base": "", "default_models": [], "key_env": ""}]
+                              "default_base": t.get("default_base", "")}
+                             for t in types if t["id"] != "demo"]
+            if name == "llm":
+                info["types"].append({"id": "demo", "label": "离线演示（不联网）",
+                                      "note": "不需要任何配置，只会说几句固定的话。", "default_base": ""})
+            info["type"] = kind
         return info
 
-    # ---------------------------------------------------------------- 写
+    def fetch_models(self, channel: str, body: dict) -> dict:
+        """页面上的"拉取模型"：用表单里还没保存的 Base URL / Key 直接去问服务。"""
+        if channel not in ("llm", "tts", "asr"):
+            raise ValueError("这个通道不支持拉取模型列表")
+        sel = ((self.conf.get("voice") or {}).get("half") or {}).get(channel) or {}
+        kind = "completions"
+        if channel == "llm":
+            kind = _TYPE_ALIAS.get(body.get("type") or sel.get("type") or "completions",
+                                   body.get("type") or sel.get("type") or "completions")
+        base = (body.get("base_url") if body.get("base_url") is not None else sel.get("base_url")) or ""
+        key = body.get("api_key") or self.key_for(channel)
+        models, error = catalog.fetch_models_ex(base, key, kind)
+        return {"ok": bool(models), "models": models, "error": error}
+
     def save(self) -> None:
         data = json.loads(json.dumps(self.conf, ensure_ascii=False))
         try:
@@ -241,33 +241,7 @@ class Settings:
             sel = key_path.setdefault(name, {})
             self._apply_channel(name, sel, patch, changed)
 
-        # agents
-        ag = body.get("agents") if isinstance(body.get("agents"), dict) else {}
-        aconf = self.conf.setdefault("agents", {})
-        if "enabled" in ag:
-            aconf["enabled"] = bool(ag["enabled"])
-            changed["agents.enabled"] = bool(ag["enabled"])
-        if ag.get("mode") in ("auto", "manual"):
-            aconf["mode"] = ag["mode"]
-            changed["agents.mode"] = ag["mode"]
-        if "active" in ag:
-            aconf["active"] = str(ag["active"] or "")
-            changed["agents.active"] = aconf["active"]
-        if "desktop" in ag:
-            aconf.setdefault("desktop", {})["enabled"] = bool(ag["desktop"])
-            changed["agents.desktop"] = bool(ag["desktop"])
-        cli = ag.get("cli") if isinstance(ag.get("cli"), dict) else {}
-        sel_cli = aconf.setdefault("cli", {})
-        for aid, spec in cli.items():
-            if aid not in {s["id"] for s in catalog.CLI_AGENTS} or not isinstance(spec, dict):
-                continue
-            row = sel_cli.setdefault(aid, {})
-            if "enabled" in spec:
-                row["enabled"] = bool(spec["enabled"])
-                changed[f"agents.cli.{aid}.enabled"] = row["enabled"]
-            if "model" in spec:
-                row["model"] = str(spec["model"])
-                changed[f"agents.cli.{aid}.model"] = row["model"]
+        self.conf.pop("agents", None)             # 动作能力已移除
 
         # 人设
         pn = body.get("persona") if isinstance(body.get("persona"), dict) else {}
@@ -279,16 +253,51 @@ class Settings:
                     cur_p[key] = val
                     changed[f"persona.{key}"] = val[:20]
 
-        self.conf["version"] = 3
+        self.conf["version"] = configure.SCHEMA_VERSION
         if any(not k.startswith("_") for k in changed):
             self.save()
         return changed
 
     def _apply_channel(self, name: str, sel: dict, patch: dict, changed: dict) -> None:
         """厂商 / 类型 / base_url / 模型列表 / 选中模型 / key。"""
-        presets = {"llm": catalog.LLM_PRESETS, "tts": catalog.TTS_PROVIDERS,
+        presets = {"llm": [], "tts": catalog.TTS_PROVIDERS,
                    "asr": catalog.ASR_PROVIDERS, "full": catalog.FULL_PROVIDERS}[name]
-        if patch.get("vendor") and patch["vendor"] != sel.get("vendor"):
+        if name == "llm":
+            sel.pop("vendor", None)         # LLM 是通用接口，不记厂商
+            sel.pop("provider", None)
+            new_type = _TYPE_ALIAS.get(patch.get("type"), patch.get("type"))
+            old_type = _TYPE_ALIAS.get(sel.get("type"), sel.get("type"))
+            if new_type and new_type != old_type and "base_url" not in patch:
+                defaults = {t["id"]: t.get("default_base", "") for t in catalog.LLM_TYPES}
+                cur = (sel.get("base_url") or "").strip()
+                if not cur or cur == defaults.get(old_type, None):
+                    sel["base_url"] = defaults.get(new_type, "")
+        elif name in ("tts", "asr"):
+            old_type = (sel.get("type") or sel.get("vendor") or sel.get("provider") or "").strip()
+            sel.pop("vendor", None)
+            sel.pop("provider", None)
+            if old_type:
+                sel["type"] = old_type
+            new_type = str(patch.get("type") or patch.get("vendor") or "").strip()
+            if new_type and new_type != old_type:
+                row = next((p for p in presets if p["id"] == new_type), None)
+                if row is None:
+                    raise ValueError(f"未知的{name}接口 {new_type!r}")
+                old_row = next((p for p in presets if p["id"] == old_type), {})
+                sel["type"] = new_type
+                changed[f"{name}.type"] = new_type
+                # Base URL 空着、或者还是旧接口的默认值 → 换成新接口的；用户自己填的不动
+                if "base_url" not in patch:
+                    cur = (sel.get("base_url") or "").strip()
+                    if not cur or cur == (old_row.get("default_base") or "").strip():
+                        sel["base_url"] = row.get("default_base", "")
+                # 模型表、音色都是跟接口走的：换接口就换成新接口的默认
+                if "models" not in patch:
+                    sel["models"] = _model_list(row.get("models") or [])
+                    sel["model"] = sel["models"][0]["id"] if sel["models"] else ""
+                if "voice" not in patch and row.get("voices"):
+                    sel["voice"] = row["voices"][0][0]
+        elif patch.get("vendor") and patch["vendor"] != sel.get("vendor"):
             vid = str(patch["vendor"])
             row = next((p for p in presets if p["id"] == vid), None)
             if row is None and vid != "none":
@@ -309,7 +318,7 @@ class Settings:
             if "voice" not in patch and row and row.get("voices"):
                 sel["voice"] = row["voices"][0][0]
         for key in ("base_url", "type", "model"):
-            if key in patch:
+            if key in patch and not (key == "type" and name in ("tts", "asr")):
                 sel[key] = str(patch[key] or "").strip()
                 changed[f"{name}.{key}"] = sel[key][:60]
         if "models" in patch and isinstance(patch["models"], list):
@@ -319,6 +328,9 @@ class Settings:
             if sel.get("model") not in ids:
                 sel["model"] = (sel["models"][0]["id"] if sel["models"] else "")
                 changed[f"{name}.model"] = sel["model"]
+        if "extra" in patch and name == "llm":
+            sel["extra"] = _parse_extra(patch["extra"])
+            changed["llm.extra"] = json.dumps(sel["extra"], ensure_ascii=False)[:60] or "{}"
         if "voice" in patch:
             sel["voice"] = str(patch["voice"] or "")
             changed[f"{name}.voice"] = sel["voice"]
@@ -326,6 +338,24 @@ class Settings:
             self.set_key(name, str(patch["api_key"] or ""))
             self.write_secrets()
             changed[f"{name}.key"] = "已设置" if self.secrets.get(name) else "已清除"
+
+
+def _parse_extra(raw) -> dict:
+    """额外请求参数：接受对象或 JSON 字符串；空 = 清掉。写错了抛 ValueError，不落盘。"""
+    if raw is None or raw == "":
+        return {}
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except ValueError as e:
+            raise ValueError(f"额外请求参数不是合法的 JSON：{e}") from e
+    if not isinstance(raw, dict):
+        raise ValueError("额外请求参数必须是一个 JSON 对象，比如 {\"enable_thinking\": false}")
+    banned = {"model", "messages", "input", "stream", "system", "instructions"}
+    bad = banned & set(raw)
+    if bad:
+        raise ValueError("额外请求参数不能覆盖这些字段：" + "、".join(sorted(bad)))
+    return raw
 
 
 def _voices_for(model: str, row: dict) -> list[dict]:

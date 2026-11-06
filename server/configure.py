@@ -1,30 +1,29 @@
 """配置体系：把页面上的选择翻译成运行时真正用的东西。
 
-**模式互斥**：全双工和半双工不会同时生效，三个 CLI 也不会同时被调用。
+**模式互斥**：全双工和半双工不会同时生效。
 
 ```
 mode = "full" | "half"        ← 二选一
-  full : 音频进、音频出（Qwen Realtime），工具调用走 agent
+  full : 音频进、音频出（Qwen Realtime），只负责聊天、记忆和表情动作
   half : LLM 出字 → TTS 念出来 → ASR 收话；麦克风按 ASR 配
 
-agents.mode = "auto" | "manual"
-  auto   : 按任务类型（code / search / desktop）自动挑一个后端
-  manual : 只用 agents.active 指定的那一个
+没有文件、电脑操作或后台任务能力。外部脚本想用她的脸和嘴，走 tools/mcp_server.py（MCP，不变）。
 ```
 
 LLM 只认三类通用接口（`openai` / `anthropic` / `gemini`），预设只是帮页面填表：
 配置里存的永远是 `type + base_url + model + api_key_env` 这四个字段。
 
 ``config.json`` 里存的就是这套结构；老配置（``brains`` / ``realtime`` / ``voice.tts`` /
-``agents.backends``）会在加载时自动迁移过来。
+``agents.backends``）会在加载时自动迁移过来，动作配置会被丢弃。
 """
 from __future__ import annotations
 
 import copy
+import pathlib
 
 from . import catalog, persona
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 5
 
 DEFAULT_ASR = {"provider": "qwen", "model": "qwen3-asr-flash"}
 
@@ -52,27 +51,11 @@ def defaults() -> dict:
                 "asr": dict(DEFAULT_ASR),
             },
         },
-        "agents": {
-            "enabled": True,
-            "mode": "auto",                # auto | manual
-            "active": "",                  # manual 模式下用哪个
-            "max_concurrent": 2,
-            "max_refine": 1,
-            "cli": {
-                "claude": {"enabled": True, "model": ""},
-                "codex": {"enabled": True, "model": ""},
-                "opencode": {"enabled": True, "model": ""},
-            },
-            "routing": {"desktop": "codex-desktop", "code": "claude", "search": "claude"},
-            "desktop": {"enabled": True},
-        },
-        "initiative": {"enabled": True, "cooldown": 90, "hourly_cap": 6,
-                       "quiet_minutes": 30, "idle_chat_seconds": 0},
         "security": {"allow_remote_actions": False},
         "io": {
             "inputs": [{"type": "http"}, {"type": "browser_speech",
                                           "barge_in": "speech_start"}],
-            "outputs": [{"type": "sse"}, {"type": "action_log"}],
+            "outputs": [{"type": "sse"}],
         },
     }
 
@@ -97,11 +80,17 @@ def migrate(conf: dict) -> tuple[dict, bool]:
         return defaults(), True
     if conf.get("version") == SCHEMA_VERSION:
         return conf, False
+    if conf.get("version") in (3, 4):
+        # 旧动作配置整套移除，只保留聊天 / 语音 / 人设。
+        out = copy.deepcopy(conf)
+        out.pop("agents", None)
+        out.pop("initiative", None)
+        out["version"] = SCHEMA_VERSION
+        return out, True
 
     out = defaults()
     out["history_turns"] = conf.get("history_turns", 12)
     out["security"] = {**out["security"], **(conf.get("security") or {})}
-    out["initiative"] = {**out["initiative"], **(conf.get("initiative") or {})}
     out["io"] = conf.get("io") or out["io"]
 
     # --- 模式：有全双工就 full，否则 half ---
@@ -136,7 +125,6 @@ def migrate(conf: dict) -> tuple[dict, bool]:
         if full:
             out["voice"]["full"] = {**out["voice"]["full"],
                                     **{k: v for k, v in full.items() if k != "enabled"}}
-        _migrate_agents(conf, out)
         return out, True
 
     if conf.get("version") == 1 or "voice" in conf:
@@ -194,61 +182,7 @@ def _migrate_v1(conf: dict, out: dict) -> None:
                                                       "voice", "vad_threshold",
                                                       "silence_duration_ms", "tools")
                                    if k in rt}}
-    _migrate_agents(conf, out)
 
-
-def _migrate_agents(conf: dict, out: dict) -> None:
-    agents = conf.get("agents") or {}
-    if not agents:
-        act = conf.get("actions") or {}
-        if act.get("cmd"):
-            out["agents"]["custom"] = {"cmd": list(act["cmd"]),
-                                      "timeout": float(act.get("timeout", 180)),
-                                      "ack": act.get("ack") or "好，我去弄一下！"}
-            out["agents"]["cli"] = {k: {**v, "enabled": False}
-                                    for k, v in out["agents"]["cli"].items()}
-        return
-    out["agents"]["enabled"] = bool(agents.get("enabled", True))
-    out["agents"]["max_concurrent"] = int(agents.get("max_concurrent", 2))
-    out["agents"]["max_refine"] = int(agents.get("max_refine", 1))
-    out["agents"]["routing"] = agents.get("routing") or out["agents"]["routing"]
-    # v2 已经有 cli 选择，直接搬
-    if isinstance(agents.get("cli"), dict) and "backend" not in agents:
-        for aid, sel in agents["cli"].items():
-            if aid in out["agents"]["cli"] and isinstance(sel, dict):
-                out["agents"]["cli"][aid].update(
-                    {k: v for k, v in sel.items() if k in ("enabled", "model")})
-        out["agents"]["desktop"]["enabled"] = bool(
-            (agents.get("desktop") or {}).get("enabled", True))
-    else:
-        backends = agents.get("backends") or {}
-        for agent_id in ("claude", "codex", "opencode"):
-            spec = _find_backend(backends, agent_id)
-            if spec is None:
-                continue
-            out["agents"]["cli"][agent_id]["enabled"] = spec.get("enabled", True) is not False
-            model = _model_from_cmd(spec.get("cmd") or [], agent_id)
-            if model:
-                out["agents"]["cli"][agent_id]["model"] = model
-        out["agents"]["desktop"]["enabled"] = any("desktop" in k for k in backends)
-
-
-def _find_backend(backends: dict, agent_id: str) -> dict | None:
-    for name, spec in backends.items():
-        if name == agent_id or name.startswith(f"{agent_id}-"):
-            return spec
-    return None
-
-
-def _model_from_cmd(cmd: list[str], agent_id: str) -> str:
-    spec = catalog.cli_spec(agent_id)
-    for i, token in enumerate(cmd):
-        for f in spec.get("model_flag") or []:
-            if token == f and i + 1 < len(cmd):
-                return cmd[i + 1]
-            if token.startswith(f"{f}="):
-                return token.split("=", 1)[1]
-    return ""
 
 
 # ---------------------------------------------------------------- 解析
@@ -306,22 +240,33 @@ def _vendor_row(sel: dict, presets: list[dict]) -> dict:
     return next((p for p in presets if p["id"] == vid), {})
 
 
+def _iface_id(sel: dict, default: str) -> str:
+    """TTS / ASR 的接口形态 id：新配置存 type，老配置是 vendor / provider。"""
+    return sel.get("type") or sel.get("vendor") or sel.get("provider") or default
+
+
 def _llm_config(sel: dict, key: str = "") -> dict:
+    """LLM 是通用接口：type + base_url + model + key，不看厂商。
+
+    旧配置里的 ``vendor`` 只用来兜底环境变量名（没有页面 key 时才用）。
+    """
     kind = sel.get("type") or "demo"
     kind = _TYPE_ALIASES.get(kind, kind)       # 老配置里的 openai/anthropic/gemini
-    row = _vendor_row(sel, catalog.LLM_PRESETS)
+    legacy = _vendor_row(sel, catalog.LLM_PRESETS)
     type_row = catalog.provider("llm_type", kind) or catalog.provider("llm_type", "completions")
-    base = sel.get("base_url") or row.get("base_url") or type_row.get("default_base", "")
-    model = sel.get("model") or row.get("model", "")
-    key_env = row.get("api_key_env") or ("" if kind == "demo"
-                                         else _DEFAULT_KEY_ENV.get(kind, "OPENAI_API_KEY"))
-    return {"type": kind, "vendor": row.get("id") or kind,
-            "label": row.get("label") or type_row.get("label", kind),
+    base = (sel.get("base_url") or type_row.get("default_base", "")).strip()
+    model = (sel.get("model") or "").strip()
+    models = [m["id"] if isinstance(m, dict) else m for m in (sel.get("models") or [])]
+    if not model and models:
+        model = models[0]
+    key_env = legacy.get("api_key_env") or ("" if kind == "demo"
+                                            else _DEFAULT_KEY_ENV.get(kind, "OPENAI_API_KEY"))
+    return {"type": kind, "vendor": kind,
+            "label": "离线演示" if kind == "demo" else type_row.get("label", kind),
             "base_url": base, "model": model,
             "api_key": key, "api_key_env": key_env,
-            "models": [m["id"] if isinstance(m, dict) else m
-                       for m in (sel.get("models") or row.get("models")
-                                 or ([model] if model else []))]}
+            "models": models or ([model] if model else []),
+            "extra": sel.get("extra") if isinstance(sel.get("extra"), dict) else {}}
 
 
 _TYPE_ALIASES = {"openai": "completions", "anthropic": "messages", "gemini": "generateContent"}
@@ -329,8 +274,8 @@ _DEFAULT_KEY_ENV = {"messages": "ANTHROPIC_API_KEY", "generateContent": "GEMINI_
 
 
 def _tts_config(sel: dict, key: str = "") -> dict:
-    row = _vendor_row(sel, catalog.TTS_PROVIDERS)
-    pid = sel.get("vendor") or sel.get("provider") or row.get("id") or "qwen-realtime"
+    pid = _iface_id(sel, "qwen-realtime")
+    row = next((p for p in catalog.TTS_PROVIDERS if p["id"] == pid), {})
     decl = [m["id"] if isinstance(m, dict) else m for m in (row.get("models") or [])]
     model = sel.get("model") or (decl[0] if decl else "")
     # 音色跟着模型走：同一个厂商的不同模型音色表不一样
@@ -347,9 +292,10 @@ def _tts_config(sel: dict, key: str = "") -> dict:
 
 
 def _asr_config(sel: dict, key: str = "") -> dict:
-    row = _vendor_row(sel, catalog.ASR_PROVIDERS)
-    pid = sel.get("vendor") or sel.get("provider") or row.get("id") or "none"
-    models = row.get("models") or []
+    pid = _iface_id(sel, "none")
+    row = next((p for p in catalog.ASR_PROVIDERS if p["id"] == pid), {})
+    models = [m["id"] if isinstance(m, dict) else m
+              for m in (sel.get("models") or row.get("models") or [])]
     return {"provider": pid, "label": row.get("label", pid),
             "model": sel.get("model") or (models[0] if models else ""),
             "api_key": key, "key_env": row.get("key_env", ""), "models": models,
@@ -357,70 +303,19 @@ def _asr_config(sel: dict, key: str = "") -> dict:
             "enabled": pid != "none"}
 
 
+_ROOT = pathlib.Path(__file__).resolve().parent.parent
+
+
+def default_workspace() -> str:
+    return str(_ROOT / "state" / "workspace")
+
+
 def _agents_config(agents: dict) -> dict:
-    """把 CLI 选择 + 探测结果变成 orchestrator 要的 backends 字典。"""
-    enabled = bool(agents.get("enabled", True))
-    cli_sel = agents.get("cli") or {}
-    routing = dict(agents.get("routing") or {})
-    backends: dict[str, dict] = {}
-    ack = (agents.get("custom") or {}).get("ack") or "好，我去弄一下！"
-
-    custom = agents.get("custom") or {}
-    if custom.get("cmd"):
-        backends["custom"] = {"type": "cli", "cmd": list(custom["cmd"]),
-                              "timeout": float(custom.get("timeout", 180))}
-
-    for spec in catalog.CLI_AGENTS:
-        aid = spec["id"]
-        sel = cli_sel.get(aid) or {}
-        if sel.get("enabled", True) is False:
-            continue
-        status = catalog.cli_status(spec)
-        if not status["installed"]:
-            continue
-        # "model" 键存在（哪怕是空串）= 用户明确选过；不存在 = 用 CLI 自己的默认。
-        model = sel["model"] if "model" in sel else (status.get("default_model") or "")
-        cmd = catalog.apply_model(_default_cmd(aid), spec.get("model_flag") or [], model)
-        backends[aid] = {"type": "cli", "cmd": cmd, "timeout": 300, "model": model}
-        if aid == "codex" and agents.get("desktop", {}).get("enabled", True):
-            backends["codex-desktop"] = {
-                "type": "cli", "timeout": 300, "model": model, "desktop": True,
-                "cmd": catalog.apply_model(
-                    ["codex", "exec", "--skip-git-repo-check", "-s", "danger-full-access",
-                     "--output-last-message", "{outfile}", "-"], spec.get("model_flag") or [], model),
-            }
-
-    available = list(backends)
-    for kind, target in list(routing.items()):
-        if target not in backends:
-            routing[kind] = available[0] if available else ""
-    default = routing.get("code") or (available[0] if available else "")
-
-    # 单后端模式：只有 agents.active 会被调用，路由表形同虚设
-    amode = agents.get("mode") or "auto"
-    active = agents.get("active") or ""
-    if amode == "manual":
-        chosen = active if active in backends else (available[0] if available else "")
-        if chosen:
-            routing = {k: chosen for k in ("code", "search", "desktop")}
-            default = chosen
-        available = [chosen] if chosen else []
-    return {"enabled": enabled and bool(backends), "backends": backends,
-            "routing": routing, "default": default, "ack": ack,
-            "mode": amode, "active": active if amode == "manual" else "",
-            "max_concurrent": int(agents.get("max_concurrent", 2)),
-            "max_refine": int(agents.get("max_refine", 1))}
-
-
-def _default_cmd(agent_id: str) -> list[str]:
-    return {
-        # --allowedTools 是可变参数，后面跟位置参数会被它吞掉，提示词必须走 stdin
-        "claude": ["claude", "-p", "--permission-mode", "acceptEdits", "--allowedTools",
-                   "Write", "Edit", "Read", "Bash", "Glob", "Grep", "WebSearch", "WebFetch"],
-        "codex": ["codex", "exec", "--skip-git-repo-check", "--output-last-message",
-                  "{outfile}", "-"],
-        "opencode": ["opencode", "run", "--auto", "{prompt}"],
-    }[agent_id]
+    """聊天专用 runtime：不创建任何能读写文件或操作桌面的后端。"""
+    return {"enabled": False, "backends": {}, "routing": {}, "default": "",
+            "ack": "好呀。", "mode": "auto", "active": "",
+            "desktop": False, "workspace": "",
+            "max_concurrent": 0, "max_refine": 0}
 
 
 def legacy_brain_config(resolved: dict) -> dict:
@@ -432,14 +327,11 @@ def legacy_brain_config(resolved: dict) -> dict:
     if kind == "demo":
         return {"demo": {"type": "demo", "label": "演示（离线）", **common}}
     # 大脑适配器认识的是接口类型，不是预设名
-    key = kind
     extra = {"label": llm.get("label"), "model": llm.get("model"),
+             "base_url": llm.get("base_url", ""), "api_key": llm.get("api_key", ""),
+             "extra": llm.get("extra") or {},
              "api_key_env": llm.get("api_key_env"), **common}
-    if kind == "generateContent":
-        return {key: {"type": kind, **extra}}
-    if kind == "messages":
-        return {key: {"type": kind, **extra}}
-    return {key: {"type": kind, "base_url": llm.get("base_url", ""), **extra}}
+    return {kind: {"type": kind, **extra}}
 
 
 def compat(resolved: dict) -> dict:
@@ -452,12 +344,13 @@ def compat(resolved: dict) -> dict:
         "history_turns": resolved["history_turns"],
         "brains": legacy_brain_config(resolved),
         "voice": {"tts": {"enabled": tts["enabled"], "provider": tts["provider"],
-                          "voice": tts["voice"], "rate": tts["rate"],
+                          "model": tts["model"], "voice": tts["voice"], "rate": tts["rate"],
                           "volume": tts["volume"], "base_url": tts["base_url"],
-                          "api_key_env": tts["key_env"]}},
+                          "api_key": tts["api_key"], "api_key_env": tts["key_env"]}},
         "realtime": {
             "enabled": full["enabled"], "provider": full["provider"],
             "model": full["model"], "api_key_env": full["api_key_env"],
+            "api_key": full["api_key"],
             "voice": full["voice"], "vad_threshold": full["vad_threshold"],
             "silence_duration_ms": full["silence_duration_ms"], "tools": full["tools"],
             # 全双工也用人设；页面上改过人设时这里给完整文本，没改就用内置常量

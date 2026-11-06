@@ -50,13 +50,11 @@ def wav_stats(data: bytes) -> tuple[int, int, float]:
 
 SCENES = [
     # (说话内容 or "", 情绪, 动作, 之后停多久, 特殊事件)
-    # 特殊事件：job=真的派个后台任务  memory=真的记住一件事  cut=真的清字幕(模拟被打断)
+    # 特殊事件：memory=真的记住一件事  cut=真的清字幕(模拟被打断)
     ("你好呀，我是鱼丫丫。", "happy", "hop", 0.8, None),
     ("住在旧电脑屏幕里。", "neutral", None, 0.6, None),
     ("什么都能聊。", "shy", "tilt", 0.7, None),
-    ("也能替你做事——", "thinking", "nod", 0.5, None),
-    ("", "neutral", None, 2.6, "job"),
-    ("好了，笔记都写好了。", "happy", "hop", 0.8, None),
+    ("也能陪你一直聊。", "thinking", "nod", 1.2, None),
     ("你喜欢什么，我也会记住。", "shy", "lean", 0.7, None),
     ("", "neutral", None, 1.0, "memory"),
     ("随时可以打断我。", "surprised", "startle", 0.7, None),
@@ -228,18 +226,6 @@ class Recorder:
 
 # ---------------------------------------------------------------- 真实事件
 #
-# 片子里的"干活"和"记住"是真的发生：提交一个后台任务、写一条长期记忆。
-
-def submit_job(task: str) -> int:
-    r = requests.post(f"{BASE}/api/jobs", json={"task": task}, timeout=30)
-    r.raise_for_status()
-    return r.json()["job_id"]
-
-
-def job_state(jid: int) -> dict:
-    return requests.get(f"{BASE}/api/jobs/{jid}", timeout=20).json()
-
-
 def remember(text: str) -> None:
     requests.post(f"{BASE}/api/memory", json={"text": text}, timeout=20)
 
@@ -325,7 +311,6 @@ def main() -> None:
             return c ? 'canvas ' + c.width + 'x' + c.height : 'no canvas';
         })()"""))
 
-        job_id = None
         t0 = time.time()
         for i in range(frames_total):
             t = i / args.fps
@@ -335,10 +320,7 @@ def main() -> None:
             for c in cues:
                 if abs(c["start"] - t) < (1 / args.fps) and not c.get("fired"):
                     c["fired"] = True
-                    if c["event"] == "job":
-                        job_id = submit_job("在 state/promo-demo.txt 里写一行：动手成功")
-                        print(f"      [{t:.1f}s] 真的派了个活：job #{job_id}")
-                    elif c["event"] == "memory":
+                    if c["event"] == "memory":
                         remember("用户喜欢在深夜写代码")
                         print(f"      [{t:.1f}s] 真的记住了一件事")
                     elif c["event"] == "cut":
@@ -349,8 +331,7 @@ def main() -> None:
                         print(f"      [{t:.1f}s] 模拟被打断")
             if i % 60 == 0:
                 done = i / max(time.time() - t0, 0.001)
-                extra = f"  job={job_state(job_id)['status']}" if job_id else ""
-                print(f"      帧 {i}/{frames_total}  ({done:.1f} fps 抓取){extra}", flush=True)
+                print(f"      帧 {i}/{frames_total}  ({done:.1f} fps 抓取)", flush=True)
         rec.close()
         print(f"[4/5] 抓帧完成，用时 {time.time() - t0:.0f}s")
     finally:

@@ -5,7 +5,6 @@
 - LLM 三类：`openai`（OpenAI 兼容）、`anthropic`（Messages）、`gemini`（Google）。任何兼容
   这些接口的服务商只要填 base_url + model + key 就能用；预设只是帮你快速填表。
 - TTS / ASR 也按接口形态分（OpenAI 兼容的 /audio/speech、/audio/transcriptions 能吃一堆服务商）。
-- 命令行 agent 自动探测装没装、各自支持哪些模型。
 
 探测结果有缓存（CLI 的模型列表要起子进程，`opencode models` 约 2 秒），页面打开时不会每次重扫。
 """
@@ -250,14 +249,16 @@ LLM_PRESETS = [
 
 TTS_PROVIDERS = [
     {
-        "id": "qwen-realtime", "label": "Qwen 实时音色", "key_env": "DASHSCOPE_API_KEY",
+        "id": "qwen-realtime", "label": "实时语音模型（Realtime，和全双工同一套音色）",
+        "key_env": "DASHSCOPE_API_KEY",
         "models": [{"id": "qwen-audio-3.1-realtime-flash", "label": "qwen-audio-3.1-realtime-flash"}],
         "voices_by_model": {"*": QWEN_VOICES},
         "voices": QWEN_VOICES,
         "note": "用实时模型朗读，和全双工语音是同一套 28 个音色。",
     },
     {
-        "id": "qwen-tts", "label": "Qwen TTS（qwen3-tts-flash）",
+        "id": "qwen-tts", "label": "原生语音合成（multimodal-generation）",
+        "default_base": "https://dashscope.aliyuncs.com",
         "key_env": "DASHSCOPE_API_KEY",
         "api": "dashscope-tts",
         "models": [{"id": "qwen3-tts-flash", "label": "qwen3-tts-flash"}],
@@ -266,12 +267,13 @@ TTS_PROVIDERS = [
         "note": "千问语音合成模型，音色和实时语音那套不同（Cherry/Ethan/Serena…）。",
     },
     {
-        "id": "edge", "label": "Edge 在线语音", "key_env": "",
+        "id": "edge", "label": "Edge 在线语音（免 Key）", "key_env": "", "local": True,
         "models": [], "voices": EDGE_VOICES,
         "note": "微软 Edge 的在线音色，免 key。",
     },
     {
         "id": "openai", "label": "OpenAI 兼容 /audio/speech", "key_env": "OPENAI_API_KEY",
+        "default_base": "https://api.openai.com/v1",
         "models": [{"id": "tts-1", "label": "tts-1"}, {"id": "tts-1-hd", "label": "tts-1-hd"}],
         "voices_by_model": {"*": OPENAI_TTS_VOICES},
         "voices": OPENAI_TTS_VOICES,
@@ -279,7 +281,7 @@ TTS_PROVIDERS = [
         "note": "OpenAI、Groq、硅基流动、自建 one-api 等只要是这个接口形态都能用。",
     },
     {
-        "id": "sapi", "label": "Windows 本机语音", "key_env": "",
+        "id": "sapi", "label": "Windows 本机语音（离线）", "key_env": "", "local": True,
         "models": [], "voices": SAPI_VOICES,
         "note": "离线可用，但中文只有慧慧，比较机械。",
     },
@@ -289,16 +291,19 @@ TTS_PROVIDERS = [
 
 ASR_PROVIDERS = [
     {
-        "id": "none", "label": "不启用语音输入", "key_env": "", "models": [],
+        "id": "none", "label": "不启用语音输入", "key_env": "", "models": [], "local": True,
         "note": "只能在控制台打字；麦克风按钮会禁用。",
     },
     {
-        "id": "qwen", "label": "Qwen 语音识别", "key_env": "DASHSCOPE_API_KEY",
+        "id": "qwen", "label": "对话式音频识别（/chat/completions + input_audio）",
+        "key_env": "DASHSCOPE_API_KEY",
+        "default_base": "https://dashscope.aliyuncs.com/compatible-mode/v1",
         "models": ["qwen3-asr-flash"],
         "note": "浏览器录音 → 服务端转写，不依赖浏览器自带的语音识别。",
     },
     {
         "id": "openai", "label": "OpenAI 兼容 /audio/transcriptions", "key_env": "OPENAI_API_KEY",
+        "default_base": "https://api.openai.com/v1",
         "models": ["whisper-1", "whisper-large-v3"],
         "base_url_field": True,
         "note": "OpenAI Whisper、Groq、硅基流动等只要是这个接口形态都能用，填 base_url 即可。",
@@ -334,194 +339,68 @@ def voices_for(tts_provider: str) -> list[dict]:
     return [{"id": i, "label": l} for i, l in p.get("voices") or QWEN_VOICES]
 
 
-def fetch_models(base_url: str, api_key: str, timeout: float = 15) -> list[dict]:
-    """从服务商实时拉模型列表（OpenAI 兼容的 GET /models）。
+def fetch_models_ex(base_url: str, api_key: str, kind: str = "completions",
+                    timeout: float = 8) -> tuple[list[dict], str]:
+    """从任意服务拉模型列表，按接口格式用对的路径和鉴权头。
 
-    拉不到就返回空列表，页面会退回"手动输入模型名"，不影响使用。
+    返回 ``(模型列表, 失败原因)``，成功时原因是空串。拉不到不影响使用，
+    页面会把原因直接显示出来，用户可以手动输入模型名。
     """
-    if not base_url:
-        return []
-    url = base_url.rstrip("/") + "/models"
+    base = (base_url or "").strip().rstrip("/")
+    if not base:
+        return [], "还没填 Base URL"
+    headers: dict = {}
+    params: dict = {}
+    if kind == "messages":
+        from .brains.anthropic_api import auth_headers
+        headers = auth_headers(api_key)
+        url = base + ("/models" if base.endswith("/v1") else "/v1/models")
+    elif kind == "generateContent":
+        url = base + ("/models" if base.endswith(("/v1beta", "/v1")) else "/v1beta/models")
+        params = {"key": api_key, "pageSize": 200} if api_key else {"pageSize": 200}
+    else:                                           # completions / responses
+        url = base + "/models"
+        if api_key:
+            headers = {"Authorization": f"Bearer {api_key}"}
     try:
-        headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
-        r = requests.get(url, headers=headers, timeout=timeout)
-        if r.status_code != 200:
-            return []
+        r = requests.get(url, headers=headers, params=params, timeout=timeout)
+    except requests.RequestException as e:
+        return [], f"连不上 {base}（{type(e).__name__}）"
+    if r.status_code in (401, 403):
+        return [], f"HTTP {r.status_code}：Key 不对或没有权限"
+    if r.status_code != 200:
+        return [], f"HTTP {r.status_code}：这个地址没有 /models 接口，手动输入模型名即可"
+    try:
         data = r.json()
-    except (requests.RequestException, ValueError):
-        return []
-    items = data.get("data") if isinstance(data, dict) else data
+    except ValueError:
+        return [], "返回的不是 JSON"
+    items = data.get("data") or data.get("models") if isinstance(data, dict) else data
     if not isinstance(items, list):
-        return []
-    out = []
+        return [], "返回格式不认识，手动输入模型名即可"
+    out, seen = [], set()
     for m in items:
-        mid = (m.get("id") if isinstance(m, dict) else str(m)) or ""
-        if not mid:
-            continue
-        out.append({"id": mid, "label": mid})
+        if isinstance(m, dict):
+            mid = m.get("id") or m.get("name") or ""
+            methods = m.get("supportedGenerationMethods")
+            if kind == "generateContent" and methods and "generateContent" not in methods:
+                continue
+        else:
+            mid = str(m)
+        mid = mid.removeprefix("models/")
+        if mid and mid not in seen:
+            seen.add(mid)
+            out.append({"id": mid, "label": mid})
     out.sort(key=lambda x: x["id"])
-    return out
+    return out, ("" if out else "接口返回了空列表")
+
+
+def fetch_models(base_url: str, api_key: str, kind: str = "completions",
+                 timeout: float = 8) -> list[dict]:
+    """``fetch_models_ex`` 的只要列表版本，带 60 秒缓存。"""
+    import hashlib
+    ck = "models:%s:%s:%s" % (kind, base_url, hashlib.sha1((api_key or "").encode()).hexdigest()[:10])
+    return _cached(ck, lambda: fetch_models_ex(base_url, api_key, kind, timeout)[0], ttl=60.0)
 
 
 def voice_ids(tts_provider: str) -> set:
     return {v["id"] for v in voices_for(tts_provider)}
-
-
-# ---------------------------------------------------------------- CLI agent
-
-CLI_AGENTS = [
-    {
-        "id": "claude", "label": "Claude Code", "bin": "claude",
-        "model_flag": ["--model"], "version_flag": ["--version"],
-        "model_source": "claude_settings",
-        "builtin_models": ["opus", "sonnet", "haiku"],
-        "default_model": "",
-        "note": "一次 -p 调用，7 秒左右。",
-    },
-    {
-        "id": "codex", "label": "Codex", "bin": "codex",
-        "model_flag": ["-m"], "version_flag": ["--version"],
-        "model_source": "codex_catalog",
-        "builtin_models": [],
-        "default_model": "",
-        "note": "一次 exec 调用，20~60 秒。",
-    },
-    {
-        "id": "opencode", "label": "OpenCode", "bin": "opencode",
-        "model_flag": ["-m"], "version_flag": ["--version"],
-        "model_source": "opencode",
-        "builtin_models": ["opencode/deepseek-v4.1-flash-free"],
-        "default_model": "opencode/deepseek-v4.1-flash-free",
-        "note": "免费模型不用登录；输出带 ANSI，已自动剥掉。",
-    },
-]
-
-
-def _claude_models() -> list[dict]:
-    out: list[dict] = []
-    cfg = pathlib.Path.home() / ".claude" / "settings.json"
-    try:
-        data = json.loads(cfg.read_text(encoding="utf-8"))
-        for opt in (data.get("modelPicker") or {}).get("options") or []:
-            mid = opt.get("model") or ""
-            if mid:
-                out.append({"id": mid, "label": opt.get("label") or mid})
-    except (OSError, ValueError):
-        pass
-    for alias in ("opus", "sonnet", "haiku"):
-        if not any(m["id"] == alias for m in out):
-            out.append({"id": alias, "label": f"{alias}（别名）"})
-    return out
-
-
-def _codex_models() -> list[dict]:
-    out: list[dict] = []
-    home = pathlib.Path.home() / ".codex"
-    try:
-        cat = json.loads((home / "cc-switch-model-catalog.json").read_text(encoding="utf-8"))
-        for m in cat.get("models") or []:
-            slug = m.get("slug") or ""
-            if slug:
-                out.append({"id": slug, "label": m.get("display_name") or slug})
-    except (OSError, ValueError):
-        pass
-    current = ""
-    try:
-        for line in (home / "config.toml").read_text(encoding="utf-8").splitlines():
-            s = line.strip()
-            if s.startswith("model ") or s.startswith("model="):
-                current = s.split("=", 1)[1].strip().strip('"')
-                break
-    except OSError:
-        pass
-    if current and not any(m["id"] == current for m in out):
-        out.insert(0, {"id": current, "label": f"{current}（当前默认）"})
-    return out
-
-
-def _opencode_models(path: str = "") -> list[dict]:
-    exe = path or shutil.which("opencode") or "opencode"
-    text = _run([exe, "models"], timeout=40)
-    out = []
-    for line in text.splitlines():
-        line = line.strip()
-        if not line or " " in line or line.startswith("-"):
-            continue
-        if "/" in line:
-            out.append({"id": line, "label": line})
-    return out
-
-
-_MODEL_SOURCES = {"claude_settings": _claude_models, "codex_catalog": _codex_models}
-
-
-def _models_for(spec: dict, path: str) -> list[dict]:
-    if spec["model_source"] == "opencode":
-        return _opencode_models(path)
-    return _MODEL_SOURCES[spec["model_source"]]()
-
-
-def cli_status(spec: dict, refresh: bool = False) -> dict:
-    """一个 CLI agent 的现状：装没装、版本、能选哪些模型。"""
-    bin_name = spec["bin"]
-    path = shutil.which(bin_name)
-    info = {"id": spec["id"], "label": spec["label"], "bin": bin_name,
-            "note": spec.get("note", ""), "installed": bool(path), "path": path or "",
-            "version": "", "models": [], "default_model": spec.get("default_model", ""),
-            "reason": "" if path else f"没找到命令 {bin_name}，请先安装并在 PATH 里"}
-    if not path:
-        return info
-    if refresh:
-        clear_cache()
-
-    def build():
-        ver = _run([path] + spec.get("version_flag", ["--version"]), timeout=20)
-        ver = (ver.strip().splitlines() or [""])[0][:60]
-        return ver, _models_for(spec, path)
-
-    try:
-        ver, models = _cached(f"cli:{spec['id']}", build)
-    except Exception:                     # 探测失败不能让页面打不开
-        ver, models = "", []
-    info["version"] = ver
-    info["models"] = models or [{"id": m, "label": m} for m in spec.get("builtin_models", [])]
-    if not info["default_model"] and info["models"]:
-        info["default_model"] = info["models"][0]["id"]
-    return info
-
-
-def agents_catalog(refresh: bool = False) -> list[dict]:
-    return [cli_status(spec, refresh) for spec in CLI_AGENTS]
-
-
-def cli_spec(agent_id: str) -> dict:
-    for spec in CLI_AGENTS:
-        if spec["id"] == agent_id:
-            return spec
-    return {}
-
-
-def apply_model(cmd: list[str], flag: list[str], model: str) -> list[str]:
-    """把 `--model X` 塞进命令行：已经有这个开关就替换它的值，没有就插到子命令之后。"""
-    if not model:
-        return list(cmd)
-    cmd = list(cmd)
-    for i, token in enumerate(cmd):
-        if token in flag or any(token.startswith(f + "=") for f in flag):
-            if "=" in token:
-                cmd[i] = f"{token.split('=', 1)[0]}={model}"
-            elif i + 1 < len(cmd):
-                cmd[i + 1] = model
-            else:
-                cmd.append(model)
-            return cmd
-    insert_at = 1
-    subcommands = {"run", "exec", "e", "review"}
-    for i, token in enumerate(cmd[1:], start=1):
-        if token in subcommands:
-            insert_at = i + 1
-            break
-        if token.startswith("-"):
-            break
-        insert_at = i + 1
-    return cmd[:insert_at] + list(flag) + [model] + cmd[insert_at:]

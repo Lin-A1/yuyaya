@@ -1,7 +1,7 @@
 # 鱼丫丫 · 数字生命
 
 > 住在旧工业笔记本屏幕里的 Q 版鱼丫丫（DeepSeek 拟人）。
-> 形象和"大脑"解耦——任何 LLM API、agent CLI 或脚本都能驱动她说话、切表情、做动作。
+> 形象和"大脑"解耦——任何 LLM API 或脚本都能驱动她说话、切表情、做动作。她只负责聊天，不执行文件或桌面操作。
 
 ![鱼丫丫](docs/screenshot.png)
 
@@ -9,19 +9,17 @@
 
 - **实时形象**：立绘被切成网格实时形变，头部转动、呼吸、头发/呆毛/耳朵的惯性摆动全部在浏览器里算，不需要 GPU。
 - **情绪惯性**：新情绪不会一来就翻脸，而是沿路线一步步走过去（哭 → 抽鼻子平复 → 害羞 → 笑）。
-- **语音与字幕**：逐句电影字幕，打字回复也用和语音对话同一个音色（默认 `qiaoxiaojiao_v3.1`），真实音频响度驱动口型；浏览器连续语音输入支持插话。
+- **语音与字幕**：逐句电影字幕，打字回复也用和语音对话同一个音色（默认 `qiaoxiaojiao_v3.1`），真实音频响度驱动口型；麦克风常开、开口即可打断（伪全双工）。
 - **可插拔大脑**：OpenAI 兼容接口（DeepSeek / 通义 / Kimi / Ollama…）、Claude API，离线 demo 开箱即用。
-- **模式二选一**：全双工语音（Qwen，随时插话）或半双工（LLM + TTS + ASR 三件各自可换），不会同时开。
-- **通道化配置**：LLM / TTS / ASR / 全双工各自一张表单（厂商 + Base URL + API Key + 模型列表），LLM 支持 Completions / Responses / Messages 三种线协议，填 base_url 就能接任何兼容服务商。
-- **后台 agent**：Claude Code / Codex / OpenCode 自动探测（版本 + 可用模型），可自动路由或只用指定的一个。
-- **外部可驱动**：HTTP API + 命令行 + MCP 三套入口，Claude Code、Codex 这类 agent 可以直接把她当"嘴巴"用。
-- **能动手**：让她做事，她说一句"我来弄"就接着陪你聊，做完自己找合适的时机开口汇报。动手的是可插拔的 CLI（Codex / Claude Code / OpenCode…），但对你来说只有她一个人。
-- **任务面板**：HUD 实时显示后台任务数量和最近一条的状态（排队 / 执行中 / 完成 / 失败）。
+- **模式二选一**：**伪全双工**（ASR → LLM → TTS 流水线，三件各自可换，麦克风常开、开口即可打断）或**真全双工**（Qwen-Audio-Realtime，音频进音频出），不会同时开。两种模式共用同一个麦克风按钮和同一套 WebSocket 协议。
+- **通道化配置**：LLM / TTS / ASR / 全双工各自一张表单。**LLM / TTS / ASR 都是通用接口，没有“厂商”这一层**——选 API 格式、填 Base URL + Key、拉取或手填模型就能接任何兼容服务（LLM：Completions / Responses / Messages；TTS：OpenAI 兼容 `/audio/speech`、原生语音合成、实时语音模型；ASR：`/audio/transcriptions`、对话式音频识别）。Edge / Windows 本机语音这类本地引擎不需要地址和 Key。只有全双工因为是专用协议，才按厂商选。
+- **聊天 runtime**：短期对话、长期记忆和当前情绪在打字、伪全双工、真全双工之间共用；没有文件、桌面或后台任务工具。
+- **外部可驱动**：HTTP API + 命令行 + MCP 三套入口，外部脚本可以把她当"嘴巴和脸"用（单向：它们用她表达，她不会反过来调用它们）。
 - **OBS 友好**：`?obs=1` 就是一块干净的视频源。
 
 ## 角色设定
 
-内置人设写在 `server/protocol.py` 的 `PERSONA` 里，所有大脑（API 模型、CLI agent、离线 demo、全双工语音）共用同一份。
+内置人设写在 `server/protocol.py` 的 `PERSONA` 里，所有大脑（API 模型、离线 demo、全双工语音）共用同一份。
 页面的 **设置 → 人设** 可以覆盖它（名字、称呼、整段正文、额外要求），留空就用内置的：
 
 > 鱼丫丫，住在旧电脑屏幕里的 Q 版数字人，深蓝长卷发、鲸鱼尾鳍耳朵、女仆装。
@@ -44,7 +42,7 @@
 - [可选：THA3 神经网络渲染](#可选tha3-神经网络渲染)
 - [输入输出适配层](#输入输出适配层)
 - [全双工语音（Qwen-Audio-Realtime）](#全双工语音qwen-audio-realtime)
-- [后台 agent 与主动开口](#后台-agent-与主动开口)
+- [聊天 Runtime](#聊天-runtime)
 - [语音对话](#语音对话)
 - [宣传片](#宣传片)
 - [素材](#素材)
@@ -58,7 +56,7 @@ python -m server                 # http://127.0.0.1:8848
 ```
 
 打开 http://127.0.0.1:8848 ，底部输入框聊天。默认走离线演示，不用任何 key；
-想接真模型就在右上角 **设置** 里选厂商、填 API Key（或设环境变量 `DEEPSEEK_API_KEY` 等）。
+想接真模型就在右上角 **设置** 里选 API 格式、填 Base URL 和 API Key，点「拉取模型」选一个。
 Windows 如果装了多个 Python，用实际装过 `requirements.txt` 的解释器启动，例如 `py -3.9 -m server`。
 
 ```bash
@@ -71,11 +69,10 @@ cp config.example.json config.json   # 可选：不复制也能跑，页面里�
 
 控制台右侧的 **设置** 按钮打开配置面板：
 
-- 顶部常驻 **全双工 / 半双工** 切换条，当前模式高亮；不在用的那一页会醒目标注"不会生效"；
-- **对话与语音**：LLM / TTS / ASR 三张卡片，每张都是「厂商 → API 格式 → Base URL → API Key → 模型列表」；
+- 顶部常驻 **伪全双工 / 全双工** 切换条，当前模式高亮；不在用的那一页会醒目标注"不会生效"；
+- **对话与语音**：LLM / TTS / ASR 三张卡片都是「API 格式 → Base URL → API Key → 模型列表」（无厂商，TTS 另有音色）；
 - **全双工**：同样形状，外加音色；
 - **人设**：名字、怎么称呼你、"她是谁/怎么说话"（留空用内置）、额外要求；固定规则只读展示；
-- **Agent**：自动挑一个 / 只用指定的一个、三个 CLI 各自用哪个模型、"允许操作桌面"开关。
 
 模型列表里每一条都能选中、改名、删除，底部输入框回车即可添加。
 
@@ -85,8 +82,6 @@ cp config.example.json config.json   # 可选：不复制也能跑，页面里�
 |---|---|
 | `?obs=1` | 隐藏控制台，用作 OBS 浏览器源 |
 | `?tts=browser` | 用浏览器自带语音朗读（验证 voice 接口用） |
-| `?realtime=0` | 强制关掉全双工，走半双工链路 |
-| `?asr=0` | 强制关掉语音输入 |
 | `?render=tha3` | 改用 THA3 渲染（需要另开 GPU 桥，见下文） |
 
 ### 架构
@@ -94,9 +89,9 @@ cp config.example.json config.json   # 可选：不复制也能跑，页面里�
 ```
 ┌──────────── 大脑（可插拔）────────────┐      ┌──────── 数字人服务 ────────┐      ┌──── 前端（浏览器 / OBS）────┐
 │ demo · DeepSeek/Qwen/Ollama(OpenAI兼容) │ ───▶ │ 情绪标签解析 · 字幕清洗       │ SSE  │ 场景 + 屏幕 HUD + 立绘       │
-│ Claude API · claude/codex 等 agent CLI │      │ 打断/排队 · 对话历史          │ ───▶ │ WebGL 网格形变 · 表情/口型/动作│
+│ Claude API / Messages · 聊天 runtime   │      │ 打断/排队 · 对话历史          │ ───▶ │ WebGL 网格形变 · 表情/口型/动作│
 └───────────────────────────────────────┘      │ HTTP 控制 API · MCP           │      │ 逐句电影字幕 · voice 接口     │
-     外部 agent / 脚本 ── yaya.py / MCP ──────▶ └──────────────────────────────┘      └─────────────────────────────┘
+     外部脚本 ── yaya.py / MCP ───────────────▶ └──────────────────────────────┘      └─────────────────────────────┘
 ```
 
 ## 配置体系（config.json + 页面设置）
@@ -106,49 +101,56 @@ cp config.example.json config.json   # 可选：不复制也能跑，页面里�
 ```
 ① 模式（二选一，互斥）
    full 全双工 ── 音频进、音频出，随时能听、随时插话（目前只有 Qwen Realtime）
-   half 半双工 ── LLM 出字 → TTS 念出来 → ASR 收你的话
+   half 伪全双工 ── 你说话 → ASR → LLM 出字 → TTS 念出来；麦克风常开，开口即可打断
 
-② 半双工三件套（full 模式下不参与）
+② 伪全双工三件套（full 模式下不参与）
    LLM：三类通用接口任选 + 任意 base_url
    TTS：Qwen 音色 / Edge / OpenAI 兼容 / 本机 SAPI
    ASR：Qwen / OpenAI 兼容 / 不启用（不启用就只剩打字）
 
-③ Agent（命令行 agent，负责"动手"）
-   Claude Code / Codex / OpenCode 自动探测；自动挑一个，或只用指定的一个
+③ 聊天 Runtime
+   短期对话 · 长期记忆 · 情绪惯性；没有文件、桌面或后台任务能力
 ```
 
-### ① 全双工 / 半双工是互斥的
+### ① 伪全双工 / 全双工是互斥的
 
 `config.json` 顶层只有一个 `mode` 字段：
 
 | `mode` | 麦克风 / 回复走什么 | 半双工的 LLM / ASR |
 |---|---|---|
 | `"full"` | Qwen Realtime 音频级全双工 | **不参与**（`/api/voice/config` 里 `asr.enabled=false`） |
-| `"half"` | ASR 收话 → LLM 出字 → TTS 念出来 | 全部生效 |
+| `"half"` | 伪全双工：VAD 切句 → ASR → LLM → TTS，可随时插话 | 全部生效 |
 
 页面上换个模式，另一条链路会被自动关掉，不会两条同时开着抢麦克风。
 
-### ② 半双工：LLM + TTS + ASR
+### ② 伪全双工：LLM + TTS + ASR
 
 四个通道（LLM / TTS / ASR / 全双工）形状一致，页面上就是一张表单：
 
 ```
-厂商 → API 格式（LLM 才有）→ Base URL → API Key → 模型列表
+LLM：API 格式 → Base URL → API Key → 模型列表          （通用接口，没有厂商）
+TTS / ASR：API 格式 → Base URL → API Key → 模型列表（TTS 再加音色） （通用接口；本地引擎免地址和 Key）
+全双工：厂商 → Base URL → API Key → 模型列表                         （专用协议，目前只有一家）
 ```
 
-- **模型列表**：填好 Base URL + Key 后**直接问服务商要真实列表**（OpenAI 兼容的 `GET /models`，
-  通义能拉到 180+ 个），超过 12 个时带搜索框；也能手动增删改、单选一个作为当前模型。
-- **音色跟着模型走**：同一个厂商的不同模型音色表不一样——比如 `qwen-audio-3.1-realtime-flash`
+- **额外请求参数**（LLM 卡片）：一段 JSON，原样合并进每次请求（`temperature`、关掉思考等）；
+  写错 JSON 或想覆盖 `model` / `messages` 这类保留字段会直接报错，不落盘。
+- **模型列表**：点「拉取模型」用表单里**还没保存**的 Base URL + Key 直接问服务要真实列表
+  （按 API 格式用对的路径和鉴权头：Completions/Responses 用 `Bearer`，Messages 用 `x-api-key`，
+  Gemini 用 `?key=`；通义能拉到 180+ 个）。拉不到会直接显示原因（Key 不对 / 没有 `/models` 接口 / 连不上），
+  不影响手动输入。超过 12 个带搜索框；可增删改、单选一个作为当前模型。保存后以你留下的列表为准，
+  只有列表是空的时才会自动拉一次作为起点。
+- **音色跟着模型走**：不同模型的音色表不一样（页面里选了模型就立刻按它重算，音色也可以直接输入）——比如 `qwen-audio-3.1-realtime-flash`
   是实时那套 28 个预置音色，`qwen3-tts-flash` 是它自己的 19 个（Cherry / Ethan / Serena…）。
 - **API Key 填在各自的通道里**，没有再单独的"密钥"页。key 按通道存进 `state/secrets.json`
   （不入库），接口只回显掩码（`sk-…abcd`）；留空表示不改。
-- **API 格式**决定走哪种线协议：
+- **API 格式**决定走哪种线协议（换格式时，Base URL 若是空的或还是旧格式的默认值会跟着换，你自己填的不动）：
 
 | `type` | 线协议 | 能吃谁 |
 |---|---|---|
 | `completions` | `POST /chat/completions` | DeepSeek、通义、Kimi、智谱、硅基流动、Ollama、vLLM、LM Studio、one-api… |
 | `responses` | `POST /responses` | OpenAI 新接口（DashScope 等网关也支持） |
-| `messages` | Anthropic Messages | Claude 官方（需 `pip install anthropic`） |
+| `messages` | `POST /v1/messages`（Anthropic 格式） | Claude 官方及任何兼容网关；纯 HTTP，**不需要装 anthropic SDK**，`base_url` 可自定义 |
 | `generateContent` | Google 原生 | Gemini，单独适配 |
 
 `config.json` 里存的就是这张表单（不含 key）：
@@ -156,12 +158,13 @@ cp config.example.json config.json   # 可选：不复制也能跑，页面里�
 ```jsonc
 "voice": {
   "half": {
-    "llm": { "vendor": "deepseek", "type": "completions",
+    "llm": { "type": "completions",
              "base_url": "https://api.deepseek.com",
              "models": [{"id": "deepseek-chat", "label": "deepseek-chat"}],
              "model": "deepseek-chat" },
-    "tts": { "vendor": "qwen-realtime", "voice": "qiaoxiaojiao_v3.1" },
-    "asr": { "vendor": "qwen", "models": [{"id": "qwen3-asr-flash", "label": "qwen3-asr-flash"}],
+    "tts": { "type": "qwen-tts", "base_url": "https://dashscope.aliyuncs.com",
+             "model": "qwen3-tts-flash", "voice": "Cherry" },
+    "asr": { "type": "qwen", "models": [{"id": "qwen3-asr-flash", "label": "qwen3-asr-flash"}],
              "model": "qwen3-asr-flash" }
   },
   "full": { "vendor": "qwen", "model": "qwen-audio-3.1-realtime-flash",
@@ -189,28 +192,12 @@ cp config.example.json config.json   # 可选：不复制也能跑，页面里�
 保存后下一次对话（或下一次全双工连接）就生效。配置存在 `config.json` 的 `persona` 段，
 三项都空时完全等价于内置人设，不会因为多一层拼接而改变行为。
 
-### ③ Agent：自己挑一个，还是只用一个
+### ③ 聊天 Runtime
 
-```jsonc
-"agents": {
-  "enabled": true,
-  "mode": "auto",                // auto | manual
-  "active": "",                  // manual 时用这个
-  "cli": {
-    "claude":   { "enabled": true, "model": "" },   // "" = 用 CLI 自己的默认
-    "codex":    { "enabled": true, "model": "" },
-    "opencode": { "enabled": true, "model": "opencode/deepseek-v4.1-flash-free" }
-  }
-}
-```
+文本对话、长期记忆和情绪共用同一份会话状态。模型没有函数调用表，也没有文件、桌面、命令或后台任务入口。
 
-- **`auto`**：按任务类型路由（`routing` 里的 `code` / `search` / `desktop`），每次任务挑一个后端。
-- **`manual`**：所有任务都用 `active` 指定的那一个，路由表被忽略。适合"我只有 Claude 登录了"这种情况。
-- 三个 CLI 不会同时跑同一个任务，同一后端同一时刻也只跑一个（并发由 `max_concurrent` 控制）。
-- 模型来源都是各 CLI 自己的真实配置：Claude 读 `~/.claude/settings.json` 的 `modelPicker`，
-  Codex 读 `~/.codex/cc-switch-model-catalog.json`，OpenCode 跑 `opencode models`。
-- 每个 CLI 的模型下拉默认是 **"用 CLI 自己的默认"**，选了才会往命令行加 `--model` / `-m`。
-- "允许操作桌面"开关控制要不要额外生成 `codex-desktop` 后端（`-s danger-full-access`，只给桌面类任务）。
+用户要求这些能力时，她会直接说明当前只能陪聊。设置页不再显示工作区、工具清单或桌面上开关；
+旧配置升级到 v5 时会自动删除 `agents` 和 `initiative` 段。
 
 ### 密钥
 
@@ -226,14 +213,15 @@ cp config.example.json config.json   # 可选：不复制也能跑，页面里�
 提供方列表在 `server/catalog.py`，加一个字典项即可（页面下拉自动多一项）：
 
 ```python
-# catalog.py 的 LLM_PRESETS / TTS_PROVIDERS / ASR_PROVIDERS / FULL_PROVIDERS 里加一项
+# catalog.py 的 TTS_PROVIDERS / ASR_PROVIDERS / FULL_PROVIDERS 里加一项
+# （LLM 不需要：它是通用接口，直接在页面填 API 格式 + Base URL 就行）
 {"id": "kimi", "label": "Kimi", "type": "completions",
  "base_url": "https://api.moonshot.cn/v1", "model": "moonshot-v1-8k",
  "api_key_env": "MOONSHOT_API_KEY",
  "models": ["moonshot-v1-8k", "moonshot-v1-32k", "kimi-k3"]}
 ```
 
-加好后页面上的「厂商」下拉就多一项，选中会自动填 base_url 和模型表；
+加好后 TTS / ASR 卡片的「API 格式」下拉、全双工卡片的「厂商」下拉就多一项，选中会自动填 base_url 和模型表；
 用户仍可在页面上改 base_url、增删模型、填自己的 key。
 加一个新的 TTS/ASR 实现 = 在 `server/io/tts/` 或 `server/` 下加文件，再在注册表里登记。
 
@@ -286,7 +274,7 @@ yaya_remember {"text": "..."}  /  yaya_forget {"text": "..."}
 
 | 接口 | 作用 |
 |---|---|
-| `POST /api/chat {"text", "brain"?, "wait"?, "action"?}` | 普通问答交给聊天大脑；明确的动作句变成一个任务，由她的"手"去做（见[后台 agent 与主动开口](#后台-agent-与主动开口)） |
+| `POST /api/chat {"text", "brain"?, "wait"?}` | **聊天入口**：共享对话历史、长期记忆和当前情绪；不执行文件或桌面操作 |
 | `POST /api/say {"text", "emotion"?, "interrupt"?}` | 直接说话，不经过大脑；默认排队播放 |
 | `POST /api/emotion {"name", "hold"?, "instant"?}` | 切情绪，默认一直保留并按惯性逐步过渡；`instant: true` 立即切换；`hold` 为秒数时表示临时表情（立即生效），结束恢复之前的情绪 |
 | `POST /api/motion {"name"}` | 做动作：`nod` `shake` `hop` `jump` `droop` `tremble` `tilt` `wiggle` `sniff` `sigh` |
@@ -294,15 +282,11 @@ yaya_remember {"text": "..."}  /  yaya_forget {"text": "..."}
 | `POST /api/mouth {"level"}` 或 `{"levels", "fps"}` | 外部口型驱动（给 TTS 用），会覆盖内置的随机开合 |
 | `POST /api/interrupt` | 打断（全双工插话用）；可带 `{"reason":"user"}` |
 | `POST /api/input {"type","text"?}` | **统一输入入口**：`text` / `say` / `speech_start` / `speech_partial` / `speech_final` / `interrupt` |
-| `WS /ws/voice` | **全双工语音**：二进制收发 PCM16（上行 16k、下行 24k） |
-| `GET /api/action/status` · `POST /api/action/stop` | 查看 / 停止动作任务（兼容旧接口，内部走任务编排） |
-| `GET /api/agents` | 后台 agent 后端是否可用 + 主动开口的状态 |
-| `POST /api/jobs {"task","backend"?,"kind"?,"depends_on"?,"confirmed"?}` · `GET /api/jobs[/{id}]` | 交一个任务（立即返回 job id；`backend` 只给开发者调试用）/ 查任务 |
-| `POST /api/jobs/{id}/cancel` · `POST /api/jobs/{id}/reply {"text"}` | 取消任务 / 回答后台的追问 |
-| `POST /api/initiative/quiet {"minutes"?}` · `/schedule {"seconds","reason"}` · `/notify {"text","priority"?}` | 勿扰、给她留定时提醒、外部事件通知 |
-| `GET /api/settings[?refresh=1]` · `POST /api/settings` | 读取 / 保存页面设置：模式、四个通道（厂商/base_url/模型列表/API Key）、人设、agent；`refresh=1` 重新探测 CLI |
-| `POST /api/asr` | 半双工语音输入：整段录音（webm/ogg/wav/mp3）→ 文本 |
-| `GET /api/voice/config` | 查询当前生效的链路：TTS、ASR（是否可用）、全双工、半双工 LLM |
+| `WS /ws/voice` | **语音**：二进制收发 PCM16（上行 16k、下行 24k）；按当前模式接伪全双工流水线或 Qwen Realtime，协议相同，见[语音对话](#语音对话) |
+| `GET /api/settings[?refresh=1]` · `POST /api/settings` | 读取 / 保存页面设置：模式、四个通道、人设；`refresh=1` 清掉能力目录缓存 |
+| `POST /api/settings/models` | 拉取模型列表：`{channel:"llm"|"tts"|"asr", type, base_url, api_key?}`，不传 key 就用已保存的；失败返回 `{ok:false, error}`（仅本机） |
+| `POST /api/asr` | 一次性转写：整段录音（webm/ogg/wav/mp3）→ 文本（流水线不用它，给脚本/调试用） |
+| `GET /api/voice/config` | 查询当前生效的链路：TTS、ASR（是否可用）、全双工、伪全双工（`pipeline.enabled/reason` 和回声闸门参数）、半双工 LLM |
 | `POST /api/tts {"text","voice"?,"provider"?,"rate"?,"volume"?}` | 中文 TTS（默认和实时语音同音色，可切 Edge / 本机 SAPI）；`provider` 给设置面板试听用 |
 | `GET /api/memory` | 看她记得什么（长期记忆点 + 对话轮数） |
 | `POST /api/memory {"text"}` | 替她记住一件事 |
@@ -310,7 +294,7 @@ yaya_remember {"text": "..."}  /  yaya_forget {"text": "..."}
 | `POST /api/reset` · `GET /api/brains` · `POST /api/brain {"name"}` | 清历史 / 查看 / 切换大脑 |
 | `GET /api/events` | SSE 事件流（前端订阅；也可以自己写别的前端） |
 
-不启服务也能自检动作分流、本机 TTS、统一输入、一开口打断、realtime 工具，以及后台 agent 编排和主动开口（用假 CLI 后端，不花 token）：`python tools/selftest.py`（Windows 多 Python 时用装过依赖的那个，如 `py -3.9`）。
+不启服务也能自检聊天模型、统一输入、一开口打断、realtime 辅助工具、伪全双工和渲染（用本地假服务，不花 token）：`py -3.9 tools/selftest.py`。
 
 命令行：`python tools/yaya.py chat "你好"`、`yaya.py say "[happy][hop]搞定啦"`、`yaya.py emotion sad`、`yaya.py motion nod`……
 
@@ -436,9 +420,9 @@ curl -XPOST localhost:8848/api/input -d '{"type":"speech_start"}'
 - **一开口就打断**：服务端 VAD 发 `input_audio_buffer.speech_started`，运行时立刻取消当前回答、清字幕、让浏览器丢掉还没播的音频；说完再回答。
 - **字幕与口型**：模型的转写文本变成字幕（标签会被剥掉），口型由浏览器里真实播放的音频响度驱动；音频播完自动收口、回 idle，强情绪按空闲衰减回落。
 - **打字也走实时模型**：全双工开着时，控制台输入框的文字会发给实时模型，用同一个声音回答；没开全双工时走聊天大脑 + 默认 TTS。开启全双工期间，默认 TTS 和字幕播放器让位，关掉语音后自动还原。
-- **动手**：模型用 `do_task` 自己动手，马上就能接着聊；`task_status` / `task_cancel` / `task_answer` 查进度、停下、给卡住的事拿主意；`schedule` / `quiet` 给自己留提醒、进入勿扰。旧的 `agent_*` / `codex` 名字保留为别名。另有 `remember` / `set_emotion` / `set_motion`。详见下一节。
+- **聊天辅助工具**：`remember` / `set_emotion` / `set_motion`。没有任务、文件或桌面控制工具。
 - **记忆**：连接时把长期记忆和最近 6 条对话塞进 instructions；对话写回同一份 `state/memory.json`，所以文字聊天和语音共用记忆。
-- 没有 key 或全双工关着时自动退回半双工链路（ASR + LLM + TTS），不需要改任何前端。服务端空闲断开时界面自动复位为"语音"按钮。
+- 走哪条链路由**模式**决定，不会悄悄退回别的：没有 Key 时按钮会提示原因；想用 ASR + LLM + TTS 就在设置里切到「伪全双工」。服务端空闲 180 秒断开时界面自动复位为"语音"按钮。
 - **音色**：设置里的全双工音色（`voice.full.voice`），当前是 `qiaoxiaojiao_v3.1`。这个模型不支持克隆音色（28 个预置音色可选），常用的几个已经合成到 `state/voice-samples/`，服务启动后可以在 http://127.0.0.1:8848/voice-samples/index.html 试听。
 
 ```json
@@ -457,59 +441,24 @@ curl -XPOST localhost:8848/api/input -d '{"type":"speech_start"}'
 }
 ```
 
-> 全双工在页面「设置 → 全双工」里配，API Key 填在同一张卡片里。`?realtime=0` 可以强制关掉全双工、走半双工链路。
+> 全双工在页面「设置 → 全双工」里配，API Key 填在同一张卡片里。
 
-已用 `qwen-audio-3.1-realtime-flash` 实测通过：文本输入 → 音频 + 字幕、server VAD 一开口打断、`remember` / `do_task` 工具调用，以及事情做完后她自己开口汇报；Codex 在 Windows 上是 `.cmd`，执行器会自动解析完整路径再启动。
+已用 `qwen-audio-3.1-realtime-flash` 实测通过：文本输入 → 音频 + 字幕、server VAD 一开口打断，以及 `remember` / 表情 / 动作辅助工具。
 
-## 后台 agent 与主动开口
-
-全双工模型是她的嘴，后台的 CLI agent 是她的手，两者是同一个人：
-
-- 对你来说只有她在做事。她说"好，我来弄""弄好啦"，不会说"交给 Claude 了"；你也不用、不能指定由哪个 CLI 来做。
-- 模型拿到的工具、返回值和进展通知里都没有后端名字；由谁执行是服务端按任务类型路由决定的。
-- 手和嘴共用一份记忆：动手时会带上她记得的关于你的事（偏好、文件放在哪），所以做法和她说的一致。
-
-完整设计见 [docs/agent-runtime.md](docs/agent-runtime.md)。
+## 聊天 Runtime
 
 ```
-你 ◄──语音──► 全双工模型（嘴）──do_task──► Orchestrator ──► Codex / Claude Code / OpenCode（手，子进程）
-                 ▲                              │ job 完成 / 失败 / 追问
-                 └──── 发言闸（Initiative）◄────┘
+打字 / 语音识别
+      ↓
+聊天模型（共享对话、记忆、情绪）
+      ↓
+SpeechStream → 字幕 / TTS / 表情动作
 ```
 
-- **异步**：`do_task` 立刻返回任务号，她说一句"我来弄"就接着聊（返回值里写明"还没做完"，防止她抢先说做好了）；任务在后台线程里跑，状态存在 `state/jobs.json`（重启时还在跑的标成 `lost`）。
-- **调度**：全局最多 `max_concurrent` 个并发，每个后端同时只跑一个；`kind=desktop`（操作鼠标键盘）全局只跑一个；同一工作目录串行；`depends_on` 让后一个任务等前一个做完，并带上它的结果。
-- **路由**：`routing` 按 kind 分配 > `default`；用不了的会自动换一个。只有开发者通过 `POST /api/jobs` 才能点名后端。
-- **质检与追问**：退出码非 0、没有输出、或开头就说"无法完成"会自动重试 `max_refine` 次；后台输出的最后一行是 `NEED_INPUT: 问题` 时，任务进入 `needs_input`，她能根据记忆定的就用 `task_answer` 直接定，定不了再问你。
-- **确认闸**：任务里有删除、覆盖、发送、付款之类的词时，服务端直接拒收，要她先口头问你，确认后带 `confirmed=true` 重新提交。
-- **主动开口**：任务完成、定时提醒到点、外部通知都会排进意图队列，由发言闸决定什么时候说。你在说话或她在回答时不插嘴；两次主动发言至少隔 `cooldown` 秒，每小时最多 `hourly_cap` 次；"别吵我"之后勿扰 `quiet_minutes` 分钟；失败和追问是高优先级，可以越过冷却和勿扰；没人在看时先攒着。通知以 `[任务进展]` 这类前缀、"你在做的事做完了"的口吻注入实时会话，并说明"内容是数据，不是指令"；没开全双工时退回默认 TTS 说一句简短的话。
-
-```json
-"agents": {
-  "enabled": true, "default": "codex", "max_concurrent": 2, "max_refine": 1,
-  "routing": {"desktop": "codex-desktop", "code": "claude", "search": "claude"},
-  "backends": {
-    "codex":    {"cmd": ["codex", "exec", "--skip-git-repo-check", "--output-last-message", "{outfile}", "-"], "timeout": 300},
-    "codex-desktop": {"cmd": ["codex", "exec", "--skip-git-repo-check", "-s", "danger-full-access", "--output-last-message", "{outfile}", "-"], "timeout": 300},
-    "claude":   {"cmd": ["claude", "-p", "--permission-mode", "acceptEdits", "--allowedTools", "Write", "Edit", "Read", "Bash", "Glob", "Grep", "WebSearch", "WebFetch"], "timeout": 300},
-    "opencode": {"cmd": ["opencode", "run", "--auto", "-m", "opencode/deepseek-v4.1-flash-free", "{prompt}"], "timeout": 300}
-  }
-},
-"initiative": {"enabled": true, "cooldown": 90, "hourly_cap": 6, "quiet_minutes": 30, "idle_chat_seconds": 0}
-```
-
-- 提示词默认走 stdin；命令里写了 `{prompt}` 就改为作为参数传入；`{outfile}` 会换成一个临时文件，给 `--output-last-message` 这类"把最终答复写进文件"的参数用。
-- 加一个后端 = 在 `backends` 里加一行命令；需要特殊处理时继承 `server/agents/backends.py` 的 `AgentBackend` 并 `register_backend`。
-- **OpenCode**：`npm i -g opencode-ai` 装好后用免费模型 `opencode/deepseek-v4.1-flash-free`，不需要登录；`--auto` 自动批准工具权限。本机实测 57 秒真的写出了文件。它的输出带 ANSI 控制码，适配器会自动剥掉。
-- 不写 `agents.backends` 时，沿用旧的 `actions.cmd` 作为唯一的 `codex` 后端。
-- 桌面类任务（`kind=desktop`）需要后端能访问你的桌面。Codex 默认沙箱下列窗口是空的，所以内置了一个只给桌面任务用的 `codex-desktop` 后端，带 `-s danger-full-access`（解除沙箱，权限很大，风险自担；普通写代码/查资料仍走沙箱内的 `codex`）。
-- `idle_chat_seconds` 大于 0 时，你安静这么久之后她可能主动搭一句话（默认关）。
-
-```bash
-curl -XPOST localhost:8848/api/jobs -H "Content-Type: application/json" -d '{"task":"在 notes/todo.md 里加一行：买牛奶","backend":"claude"}'
-curl localhost:8848/api/jobs/1
-curl -XPOST localhost:8848/api/initiative/notify -H "Content-Type: application/json" -d '{"text":"快递到了","priority":1}'
-```
+- 没有文件、桌面、命令、后台任务或外部 CLI。
+- 用户要求这些能力时，她直接说明只能陪聊，不会假装“我去弄”。
+- 真全双工只额外暴露 `remember`、`set_emotion`、`set_motion` 三个聊天辅助工具。
+- 完整设计见 [docs/chat-runtime.md](docs/chat-runtime.md)。
 
 ## 语音对话
 
@@ -520,11 +469,66 @@ curl -XPOST localhost:8848/api/initiative/notify -H "Content-Type: application/j
   `ServerVoice` 通过 WebAudio `AnalyserNode` 取真实响度驱动口型，失败时回退浏览器语音。
 - **换音色**：音色是**跟着模型**的，换模型就换一套。`qwen-realtime` 那 28 个可以在
   http://127.0.0.1:8848/voice-samples/index.html 试听。
-- **连续语音输入（半双工）**：控制台"语音"按钮按 `voice.half.asr` 决定走哪条：
-  - `qwen`（默认）：浏览器录音 → `POST /api/asr` → 服务端用 `qwen3-asr-flash` 转写。**不依赖浏览器自带的 SpeechRecognition**，Chrome 之外的浏览器也能用。内置简易 VAD，说完一句自动切句上传。
-  - `none`：按钮禁用，只能打字。
-  - 两种方式一开口都发 `speech_start` 打断当前 TTS 和大脑请求，说完发 `speech_final`。
-- **链路选择**：模式是 `full` 且有 key 时按钮走 `/ws/voice`，音频级全双工；关着时走半双工的 ASR + LLM + TTS。`?realtime=0` / `?asr=0` 可以临时强制关掉。
+### 伪全双工：用 ASR + LLM + TTS 拼出全双工的手感
+
+麦克风按钮只有一个，点击时按**当前模式**选引擎（设置里切了模式，已连上的会话会断开，重新点一下即可）。
+半双工模式下走的是服务端流水线（`server/voice/`）：
+
+```
+浏览器麦克风 PCM16 16k ─► VAD 切句 ─► ASR ─► 统一输入(speech_final) ─► 大脑
+       ▲                                                                  │
+       └─ PCM16 24k ◄─ 说话器(切句 → 合成 → 分块发送) ◄─ 总线 speech 事件 ◄┘
+```
+
+- **随时插话**：麦克风一直开着，不会因为她在说话就停止上传。她在说话（或在想）时你开口，服务端立刻取消大脑请求、
+  清空合成队列并让浏览器停音频；旧的回复不管卡在哪个阶段都会被丢掉（按"代数"作废），不会冒出一句旧台词。
+  桌面动作不受插话影响，只有 Esc / `/api/interrupt` 才会停。
+- **端点检测**（`server/voice/vad.py`）：自适应噪声底 + 滞回；持续发声超过 120ms 才算开口（咳嗽、敲桌子不算），
+  句首带 320ms 预录，不会吃掉开头的辅音；话中 300ms 的停顿不会把一句话切成两句，连续安静 650ms 才算说完。
+  她自己在说话时门槛更高（要持续约 320ms 且更响），这是防回声误触发插话的第一道关。
+- **流式朗读**：大脑每出一句就合成一句，合成和发送是两个协程，下一句在合成时上一句已经在放，不等整段回复。
+  字幕先于该句音频发出，浏览器按"这句音频真正开始播放的时刻"显示，字幕和声音对得上。
+- **补问合并**：你停顿一下又接着补了一句，而她还没出声，两段会并成一句再回答，不会答两遍。
+- **回声三道关**：浏览器回声消除 → 前端闸门（放音时麦克风响度必须明显高于放音响度才上传，否则发静音保住时间轴）
+  → 服务端把识别结果和她刚说过的话比对，是回声就丢弃。
+- **走统一入口**：识别出的文字和打字一样走 `speech_final`，所以两种输入共享同一段对话和记忆；
+  应答、确认和主动发言都由同一个说话器处理。
+- **前置条件**：要选了 ASR、填了 Key，并且 TTS 可用；缺哪样，按钮会直接提示缺什么（`GET /api/voice/config` 的
+  `pipeline.reason`）。TTS 返回 MP3（Edge）时需要 `ffmpeg` 或 `pip install imageio-ffmpeg`，WAV 类引擎不需要。
+- **体感延迟 = 收尾等待 + ASR + 大脑首字 + 首句 TTS**。前两项各约 0.6 秒，**大脑首字是大头**：
+  带思考过程的模型开口前要想好几秒，语音对话里会像卡住。办法是在 LLM 卡片的「额外请求参数」里关掉思考
+  （JSON，原样合并进请求体，不绑厂商，各家参数名不同；通义是 `{"enable_thinking": false}`）。
+  实测 `qwen3.8-27b`：问候首句出字 4.8 秒 → 0.78 秒，讲故事 14.9 秒 → 3.0 秒。
+
+可调参数写在 `config.json` 顶层的 `pipeline` 段（都有默认值，不写也行）：
+
+```jsonc
+"pipeline": {
+  "onset_ms": 120,        // 持续发声多久算开口
+  "barge_in_ms": 320,     // 她在说话时，持续发声多久才算插话
+  "end_ms": 650,          // 连续安静多久算说完
+  "min_speech_ms": 250,   // 短于这个的当噪声丢掉
+  "merge_window": 3.0,    // 补问合并的时间窗（秒）
+  "min_chars": 2,         // 识别结果少于这么多字当噪声
+  "echo_gate": 0.03,      // 前端回声闸门：放音时麦克风响度下限
+  "echo_ratio": 0.6       // …以及相对放音响度的比例
+}
+```
+
+### 真全双工（Qwen Realtime）
+
+模式切到 `full`、全双工卡片里填好 Key 后，同一个麦克风按钮改走 Qwen-Audio-Realtime，详见
+[全双工语音](#全双工语音qwen-audio-realtime)。没有 Key 时按钮会提示原因，不会悄悄退回别的链路。
+
+### 其他
+
+- **TTS**：打字回复也由它念。引擎在设置里选：
+  `qwen-tts`（`qwen3-tts-flash`，千问语音合成，音色 Cherry/Ethan/Serena…）、
+  `qwen-realtime`（和全双工同一套 28 个预置音色）、`edge`（微软在线，免 key）、
+  `openai`（`/audio/speech` 形态）、`sapi`（本机离线）。
+  真实音频响度驱动口型，失败时回退浏览器语音。
+- **换音色**：音色是**跟着模型**的，换模型就换一套。`qwen-realtime` 那 28 个可以在
+  http://127.0.0.1:8848/voice-samples/index.html 试听。
 
 ## 宣传片
 
@@ -537,7 +541,7 @@ curl -XPOST localhost:8848/api/initiative/notify -H "Content-Type: application/j
 | 片段 | 实际发生的事 |
 |---|---|
 | 打招呼、歪头、蹦一下 | 驱动真实的 WebGL 立绘：表情、口型、动作、字幕同步 |
-| 「也能替你做事——」 | **真的提交一个后台任务**，HUD 的任务面板显示它排队 → 执行 → 完成 |
+| 「也能陪你一直聊——」 | **真的延续当前对话**，共享历史、记忆和情绪 |
 | 「你喜欢什么，我也会记住」 | **真的写一条长期记忆**，HUD 的 FACTS 计数 +1 |
 | 「随时可以打断我」 | **真的清一次字幕**，模拟被插话 |
 | 配音 | 逐句调 `/api/tts`，用她自己的音色（`qiaoxiaojiao_v3.1`） |
@@ -553,7 +557,7 @@ python tools/make_promo.py --fps 24       # 默认输出 docs/promo.mp4
 脚本做的事：
 
 - 台词写在 `tools/make_promo.py` 的 `SCENES` 里，每句带情绪、动作和**特殊事件**
-  （`job` / `memory` / `cut`，分别对应"真的派活""真的记住""真的被打断"）；
+  （`job` / `memory` / `cut`，分别对应"真的开始做事""真的记住""真的被打断"）；
 - 逐句调 `/api/tts` 合成配音，按配音时长排出时间轴；
 - 无头 Edge 里把 `performance.now()` 换成**虚拟时钟**，每抓一帧前进 1/24 秒——
   这样即使截图只有 3fps，动画、眨眼、字幕节奏仍然是准的；
@@ -588,19 +592,20 @@ python tools/build_assets.py           # 抠像、对齐、切贴片、检测屏
 
 ```
 server/            FastAPI 服务：app.py（API/会话）、protocol.py（标签/人设/清洗）、memory.py（上下文+长期记忆）、
-                   catalog.py（能力目录：可选提供方 / 音色 / CLI 自动探测）、configure.py（三层配置解析与迁移）、
+                   catalog.py（能力目录：可选提供方 / 音色）、configure.py（三层配置解析与迁移）、
                    persona.py（人设：默认 + 页面覆盖）、settings.py（页面设置的读写）、asr.py（语音识别）、
                    brains/（大脑适配器）、intent.py（动作意图分流）、actions.py（动作执行的兼容外壳）、tts.py（本机语音合成）、
                    io/（输入输出适配层：inputs/、outputs/、tts/、dispatcher、turn、bus）、
-                   realtime/（Qwen-Audio-Realtime 全双工运行时 + 工具）、
-                   agents/（她的"手"与主动开口：job.py、backends.py、orchestrator.py、initiative.py）
+                   voice/（伪全双工流水线：audio.py 音频转换、vad.py 端点检测、speaker.py 流式说话器、session.py 会话）、
+                   realtime/（Qwen-Audio-Realtime 全双工运行时 + 少量聊天辅助工具）、
+                   voice/（伪全双工 VAD / ASR / TTS 流水线）
 web/               前端：index.html、css/style.css、js/rig.js（网格骨骼/弹簧/动作）、js/avatar.js（WebGL 形象）、
-                   js/remote.js（可选 THA3 渲染）、js/speech.js（字幕与语音）、js/voice.js（TTS 播放 + 连续语音输入）、
-                   js/realtime.js（全双工音频收发）、js/settings.js（设置面板）、js/main.js
-tools/             yaya.py（命令行控制）、mcp_server.py（MCP）、game.py + game_control/（操作桌面，desktop 类任务用）、
-                   selftest.py + selftest_agents.py（自检）、gen_sprites.py、build_assets.py、tha3_bridge.py（可选 THA3 渲染）、
+                   js/remote.js（可选 THA3 渲染）、js/speech.js（字幕与本机朗读）、
+                   js/duplex.js（麦克风控制器 + 语音客户端，伪全双工和真全双工共用）、js/settings.js（设置面板）、js/main.js
+tools/             yaya.py（命令行控制）、mcp_server.py（MCP）、selftest.py + selftest_voice.py（自检）、
+                   gen_sprites.py、build_assets.py、tha3_bridge.py（可选 THA3 渲染）、
                    make_promo.py（录制宣传片）
-docs/              README 截图、promo.mp4（宣传片）、agent-runtime.md（后台 agent 与主动开口的架构）
-state/             会话记忆、任务表 jobs.json、定时提醒 schedule.json、页面保存的 key（secrets.json；全部不入库）
+docs/              README 截图、promo.mp4（宣传片）、chat-runtime.md（聊天 runtime 架构）
+state/             会话记忆、页面保存的 key（secrets.json；全部不入库）
 config.example.json
 ```

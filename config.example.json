@@ -1,5 +1,5 @@
 {
-  "version": 3,
+  "version": 5,
   "mode": "half",
   "history_turns": 12,
   "voice": {
@@ -48,42 +48,6 @@
       }
     }
   },
-  "agents": {
-    "enabled": true,
-    "mode": "auto",
-    "active": "",
-    "max_concurrent": 2,
-    "max_refine": 1,
-    "cli": {
-      "claude": {
-        "enabled": true,
-        "model": ""
-      },
-      "codex": {
-        "enabled": true,
-        "model": ""
-      },
-      "opencode": {
-        "enabled": true,
-        "model": "opencode/deepseek-v4.1-flash-free"
-      }
-    },
-    "routing": {
-      "desktop": "codex-desktop",
-      "code": "claude",
-      "search": "claude"
-    },
-    "desktop": {
-      "enabled": true
-    }
-  },
-  "initiative": {
-    "enabled": true,
-    "cooldown": 90,
-    "hourly_cap": 6,
-    "quiet_minutes": 30,
-    "idle_chat_seconds": 0
-  },
   "security": {
     "allow_remote_actions": false
   },
@@ -100,9 +64,6 @@
     "outputs": [
       {
         "type": "sse"
-      },
-      {
-        "type": "action_log"
       }
     ]
   }

@@ -105,10 +105,9 @@ PERSONA = """你是"鱼丫丫"，住在旧电脑屏幕里的 Q 版数字人：�
 - 认真想事情 → [thinking]，会歪头看屏幕。
 - 对方很久没说话，你会 [thinking][tilt] 先开口问一句。
 
-【你做事的样子】
-你能在对方的电脑上动手：读写文件、查资料、写代码、跑命令。这些都是你自己在做，
-不要说"交给谁了"，不要提任何工具、程序或别的助手的名字。
-做完就用 1~3 句口语说结果，像"搞定啦，笔记写好了"，别念代码和路径。
+【你的能力边界】
+你只负责聊天和陪伴，不能读写文件、操作电脑、执行命令或调用外部智能体。
+对方让你做这些事时，自然说明现在只能陪聊；不要说"我去弄"，也不要假装已经开始或已经完成。
 
 【输出规则（重要）】
 1. 回复会逐句显示成电影字幕：每句不超过 25 个字，总共一般不超过 4 句。
@@ -141,6 +140,18 @@ CLI_WRAPPER = """{persona}
 _TAG_RE = re.compile(r"\[\s*(?:emo(?:tion)?\s*[:：=]\s*)?([A-Za-z_一-鿿]{1,16})\s*\]")
 # 记忆标签：[记住:用户喜欢喝奶茶] —— 内容不进字幕，只写进长期记忆
 _MEM_RE = re.compile(r"\[\s*(?:记住|记忆|remember)\s*[:：]\s*([^\]]{1,120}?)\s*\]")
+
+# 动手标签（聊天大脑没有函数调用，就用文本标签派活；内容不进字幕、不会被念出来）：
+#   [做事:code|把 hello.py 写出来]      类型 desktop/code/search/general，缺省 general
+#   [做事!:code|删掉旧日志]              感叹号 = 用户已明确同意（涉及删除/覆盖/发送/付款时才需要）
+#   [取消:3]   [回答:3|存 D 盘]
+_TASK_RE = re.compile(
+    r"\[\s*(?:做事|动手|task)(!?)\s*[:：]\s*"
+    r"(?:(desktop|code|search|general)?\s*[|｜]\s*)?"
+    r"([^\]]{1,400}?)\s*\]", re.I)
+_CANCEL_RE = re.compile(r"\[\s*(?:取消|cancel)\s*[:：]\s*#?(\d{1,6})\s*\]", re.I)
+_ANSWER_RE = re.compile(r"\[\s*(?:回答|answer)\s*[:：]\s*#?(\d{1,6})\s*[|｜]\s*([^\]]{1,300}?)\s*\]", re.I)
+_TAG_LIMIT = 460          # 未闭合的 [ 最多等这么长，再不闭合就当普通文字
 _MD_LINE_RE = re.compile(r"^\s{0,3}(?:#{1,6}\s+|[-*+]\s+|\d+[.)]\s+|>\s?)")
 _MD_INLINE_RE = re.compile(r"(\*\*|__|`|~~)")
 _LINK_RE = re.compile(r"!?\[([^\]]*)\]\([^)]*\)")
@@ -168,6 +179,12 @@ class SpeechStream:
             cut = len(self.buf) - 1
             lb = self.buf.rfind("[")
             if lb > self.buf.rfind("]"):
+                cut = lb - 1
+        if cut >= 0:
+            # 切点落在未闭合的标签里就先别切（"[做事:code|写个脚本。保存成 a.py]" 里的句号不是句末）
+            lb = self.buf.rfind("[", 0, cut + 1)
+            if lb >= 0 and self.buf.rfind("]", lb, cut + 1) < 0 \
+                    and len(self.buf) - lb < _TAG_LIMIT:
                 cut = lb - 1
         if cut < 0:
             return []
@@ -204,13 +221,34 @@ class SpeechStream:
         pos = 0
         # 记忆标签和情绪/动作标签按出现顺序一起扫，记忆事件留在它该在的位置
         tags = sorted(
-            [m for m in _MEM_RE.finditer(line)] + [m for m in _TAG_RE.finditer(line)],
+            [m for rx in (_MEM_RE, _TASK_RE, _CANCEL_RE, _ANSWER_RE) for m in rx.finditer(line)]
+            + [m for m in _TAG_RE.finditer(line)],
             key=lambda m: m.start(),
         )
         for m in tags:
+            if m.start() < pos:
+                continue                       # 被前一个标签吃掉的部分
             if m.re is _MEM_RE:
                 events.append(self._text(line[pos:m.start()]))
                 events.append({"op": "memory", "text": m.group(1).strip()})
+                pos = m.end()
+                continue
+            if m.re is _TASK_RE:
+                events.append(self._text(line[pos:m.start()]))
+                events.append({"op": "task", "text": m.group(3).strip(),
+                               "kind": (m.group(2) or "general").lower(),
+                               "confirmed": bool(m.group(1))})
+                pos = m.end()
+                continue
+            if m.re is _CANCEL_RE:
+                events.append(self._text(line[pos:m.start()]))
+                events.append({"op": "cancel", "job_id": int(m.group(1))})
+                pos = m.end()
+                continue
+            if m.re is _ANSWER_RE:
+                events.append(self._text(line[pos:m.start()]))
+                events.append({"op": "answer", "job_id": int(m.group(1)),
+                               "text": m.group(2).strip()})
                 pos = m.end()
                 continue
             emo, motion = normalize_emotion(m.group(1)), normalize_motion(m.group(1))

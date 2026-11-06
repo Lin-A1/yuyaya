@@ -32,6 +32,10 @@ DEFAULTS = {
     "extra": "",
 }
 
+CHAT_ONLY_BOUNDARY = """【当前能力边界（优先于以上所有设定）】
+你只能聊天和陪伴，不能读写文件、操作电脑、执行命令或调用外部智能体。
+用户让你做这些事时，直接说明现在只能陪聊；不要说“我去弄”，也不要假装已经开始或完成。"""
+
 
 def effective(persona: dict | None) -> str:
     """把 persona 配置拼成实际发给模型的提示词。
@@ -47,7 +51,7 @@ def effective(persona: dict | None) -> str:
         return DEFAULT_IDENTITY
 
     base = identity or DEFAULT_IDENTITY
-    parts = [base]
+    parts = [base, CHAT_ONLY_BOUNDARY]
     if address and address != DEFAULTS["address"]:
         parts.append(f"称呼用户为「{address}」。")
     if extra:

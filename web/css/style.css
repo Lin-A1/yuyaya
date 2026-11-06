@@ -297,6 +297,13 @@ body.obs { background: transparent; }
   border-color: rgba(127, 225, 178, .65); background: rgba(255, 255, 255, .07);
 }
 .cfg-policy { display: block; font-size: 11px; opacity: .42; margin-top: 6px; }
+.cfg-policy--block { opacity: .6; line-height: 1.7; margin: 10px 0 14px; }
+.cfg-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.cfg-chip {
+  font-size: 12px; padding: 4px 10px; border-radius: 999px;
+  background: rgba(255, 255, 255, .06); border: 1px solid rgba(255, 255, 255, .09); color: #cfdad5;
+}
+.cfg-chip.lock { border-color: rgba(255, 206, 122, .4); color: #ffce7a; }
 
 /* 模型列表 */
 .c-model-list {

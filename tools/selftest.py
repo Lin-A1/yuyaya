@@ -15,8 +15,6 @@ for _s in (sys.stdout, sys.stderr):
     if hasattr(_s, "reconfigure"):
         _s.reconfigure(encoding="utf-8", errors="replace")
 
-from server.intent import is_action_request  # noqa: E402
-
 fails = 0
 
 
@@ -25,13 +23,6 @@ def check(name: str, cond: bool, extra: str = "") -> None:
     if not cond:
         fails += 1
     print(f"[{'  ok  ' if cond else ' FAIL '}] {name}{(' - ' + extra) if extra else ''}")
-
-
-def test_intent() -> None:
-    actions = ["打开记事本", "帮我打开浏览器", "点一下开始", "按一下空格"]
-    chats = ["怎么打开任务管理器", "今天天气怎么样", "我刚刚打开了游戏"]
-    check("动作意图", all(is_action_request(t) for t in actions))
-    check("普通问答不误判", not any(is_action_request(t) for t in chats))
 
 
 def test_tts() -> None:
@@ -67,6 +58,104 @@ def _brains_ok() -> bool:
         except Exception:
             return False
     return True
+
+
+def test_messages_brain() -> None:
+    """Messages 适配器必须尊重 base_url，并正确解析流式事件（不依赖 anthropic SDK）。"""
+    import http.server
+    import threading
+    from server.brains import build_brain
+
+    seen: dict = {}
+
+    class H(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_POST(self):
+            n = int(self.headers.get("content-length") or 0)
+            seen["path"] = self.path
+            seen["key"] = self.headers.get("x-api-key")
+            seen["auth"] = self.headers.get("Authorization")
+            seen["body"] = json.loads(self.rfile.read(n))
+            self.send_response(200)
+            self.send_header("content-type", "text/event-stream")
+            self.end_headers()
+            for ev in (
+                {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "[happy]你"}},
+                {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "好呀"}},
+                {"type": "message_stop"},
+            ):
+                self.wfile.write(b"data: " + json.dumps(ev, ensure_ascii=False).encode() + b"\n\n")
+
+        def do_GET(self):
+            seen["models_path"] = self.path
+            seen["models_key"] = self.headers.get("x-api-key")
+            body = json.dumps({"data": [{"id": "m-b"}, {"id": "m-a"}]}).encode()
+            self.send_response(200)
+            self.send_header("content-type", "application/json")
+            self.end_headers()
+            self.wfile.write(body)
+
+    srv = http.server.HTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{srv.server_address[1]}"
+    try:
+        b = build_brain("messages", {"type": "messages", "model": "any-model", "base_url": base,
+                                     "api_key": "k-test"})
+        out = "".join(b.stream("hi", [], threading.Event()))
+        check("Messages 适配器走自定义 base_url 并解析流式",
+              out == "[happy]你好呀" and seen.get("path") == "/v1/messages",
+              f"{out!r} {seen.get('path')}")
+        check("Messages 请求带 x-api-key 和 Bearer，且没有 Anthropic 专有参数",
+              seen.get("key") == "k-test" and seen.get("auth") == "Bearer k-test"
+              and "output_config" not in seen.get("body", {})
+              and seen["body"]["model"] == "any-model",
+              str(list(seen.get("body", {}))))
+        from server import catalog
+        models, err = catalog.fetch_models_ex(base, "k-test", "messages")
+        check("按 Messages 格式拉模型列表（x-api-key + /v1/models）",
+              [m["id"] for m in models] == ["m-a", "m-b"]
+              and seen.get("models_path") == "/v1/models"
+              and seen.get("models_key") == "k-test", f"{models} {err}")
+    finally:
+        srv.shutdown()
+
+
+def test_extra_params() -> None:
+    """LLM 的"额外请求参数"必须原样进请求体（比如关掉思考）。"""
+    import http.server
+    import threading
+    from server.brains import build_brain
+
+    seen: dict = {}
+
+    class H(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_POST(self):
+            n = int(self.headers.get("content-length") or 0)
+            seen["body"] = json.loads(self.rfile.read(n))
+            self.send_response(200)
+            self.send_header("content-type", "text/event-stream")
+            self.end_headers()
+            self.wfile.write(b'data: {"choices":[{"delta":{"content":"ok"}}]}\n\ndata: [DONE]\n\n')
+
+    srv = http.server.HTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        b = build_brain("completions", {"type": "completions", "model": "m", "api_key": "k",
+                                        "base_url": f"http://127.0.0.1:{srv.server_address[1]}",
+                                        "extra": {"enable_thinking": False, "temperature": 0.3}})
+        "".join(b.stream("hi", [], threading.Event()))
+        body = seen.get("body", {})
+        check("额外请求参数原样进了请求体，且不影响 model / messages",
+              body.get("enable_thinking") is False and body.get("temperature") == 0.3
+              and body.get("model") == "m" and body.get("stream") is True
+              and body["messages"][-1]["content"] == "hi", str(sorted(body)))
+    finally:
+        srv.shutdown()
 
 
 def test_api() -> None:
@@ -105,9 +194,50 @@ def test_api() -> None:
             r = client.post("/api/chat", json={"text": "今天天气怎么样", "wait": True})
             check("普通问答走聊天模型", r.status_code == 200 and r.json().get("brain") == "demo",
                   r.text[:120])
+
+            av = client.app.state.avatar
+
+            class _ContinuityBrain:
+                name, label, kind = "continuity", "continuity", "stub"
+                conf = {"type": "stub"}
+
+                def info(self):
+                    return {"name": self.name, "kind": self.kind, "label": self.label,
+                            "role": "chat", "model": "stub", "available": True,
+                            "reason": "", "slow": False}
+
+                def availability(self):
+                    return True, ""
+
+                def stream(self, prompt, history, cancel, context=""):
+                    seen = "\n".join(m.get("content", "") for m in history)
+                    if prompt.startswith("第二轮"):
+                        yield "记住了" if "记住了" in seen else "不知道"
+                    else:
+                        yield "记住了。"
+
+            old_active = av.active
+            av.brains["continuity"] = _ContinuityBrain()
+            av.active = "continuity"
+            try:
+                first = client.post("/api/chat", json={
+                    "text": "这是一次连续对话测试。请只回复：记住了。", "wait": True})
+                second = client.post("/api/chat", json={
+                    "text": "第二轮：我刚才让你回复的是什么？", "wait": True})
+                check("连续两轮共享上下文，不会退化成只能一问一答",
+                      first.status_code == 200 and second.status_code == 200
+                      and first.json().get("reply") == "记住了。"
+                      and second.json().get("reply") == "记住了",
+                      f"{first.text[:100]} / {second.text[:100]}")
+            finally:
+                av.brains.pop("continuity", None)
+                av.active = old_active
+
             r = client.post("/api/chat", json={"text": "打开记事本", "wait": True})
-            check("动作请求走执行器",
-                  r.status_code == 200 and r.json().get("action") is True, r.text[:160])
+            check("动作能力已移除：请求只走聊天，不再派任务",
+                  r.status_code == 200 and r.json().get("brain") == "demo"
+                  and "job_id" not in r.json(), r.text[:160])
+            check("旧任务接口已移除", client.get("/api/jobs").status_code == 404, "")
             r = client.post("/api/chat", json={"text": "hi", "brain": "codex", "wait": True})
             check("聊天不能直接选不存在的 CLI 名字", r.status_code == 404, r.text[:120])
             r = client.get("/api/voice/config")
@@ -149,39 +279,43 @@ def test_api() -> None:
                   str(cfg2.get("tts")))
             check("voice config 带 realtime 能力", "realtime" in cfg2, str(cfg2)[:120])
 
-            # 页面设置：三层配置（全双工 / 半双工 LLM+TTS+ASR / agent CLI）
+            # 页面设置：全双工 / 半双工 LLM+TTS+ASR / 人设
             st = client.get("/api/settings").json()
             check("设置接口按通道组织",
-                  {"llm", "tts", "asr", "full", "agents", "persona"} <= set(st),
+                  {"llm", "tts", "asr", "full", "persona"} <= set(st),
                   str(list(st))[:120])
-            check("每个通道都有 厂商 + base_url + 模型列表",
-                  all({"vendor", "vendors", "base_url", "models", "model"} <= set(st[c])
+            check("每个通道都有 base_url + 模型列表 + key 状态",
+                  all({"base_url", "models", "model", "has_key"} <= set(st[c])
                       for c in ("llm", "tts", "asr", "full")),
                   str({c: list(st[c])[:6] for c in ("llm", "tts", "asr")}))
+            check("LLM / TTS / ASR 是通用接口，没有厂商这一层；只有全双工按厂商",
+                  all("vendor" not in st[c] and "vendors" not in st[c] and "types" in st[c]
+                      for c in ("llm", "tts", "asr"))
+                  and {"vendor", "vendors"} <= set(st["full"]),
+                  str({c: list(st[c]) for c in ("llm", "tts", "asr")}))
             check("全双工只列一家（Qwen）",
                   [v["id"] for v in st["full"]["vendors"]] == ["qwen"],
                   str([v["id"] for v in st["full"]["vendors"]]))
             check("全双工音色表有平台预置音色",
                   len(st["full"]["voices"]) > 5 and st["full"]["voice"] == "qiaoxiaojiao_v3.1",
                   str(st["full"]["voice"]))
-            check("LLM 只认三种线协议",
+            check("LLM 只认三种线协议（外加 Google 原生和离线演示）",
                   [t["id"] for t in st["llm"]["types"]] ==
-                  ["completions", "responses", "messages", "generateContent"],
+                  ["completions", "responses", "messages", "generateContent", "demo"],
                   str([t["id"] for t in st["llm"]["types"]]))
-            check("厂商预设带默认模型和接口类型",
-                  all(v["default_models"] is not None for v in st["llm"]["vendors"]),
-                  str([(v["id"], len(v["default_models"])) for v in st["llm"]["vendors"]][:4]))
+            check("TTS/ASR 接口格式带默认模型，本地引擎标了 local",
+                  all(v["default_models"] is not None for v in st["tts"]["types"])
+                  and {t["id"] for t in st["tts"]["types"] if t["local"]} == {"edge", "sapi"}
+                  and st["asr"]["enabled"] is True,
+                  str([(v["id"], v["local"]) for v in st["tts"]["types"]]))
             check("四种大脑适配器都能构建", _brains_ok(), "")
             check("人设可在设置里改（有默认值和自定义标记）",
                   st["persona"]["default_identity"] and "customized" in st["persona"],
                   str(list(st["persona"]))[:100])
             check("ASR 可选 none（不启用语音输入）",
-                  any(v["id"] == "none" for v in st["asr"]["vendors"]),
-                  str([v["id"] for v in st["asr"]["vendors"]]))
-            check("agent 三个 CLI 都被探测到（装没装都要有记录）",
-                  len(st["agents"]["cli"]) == 3
-                  and all({"installed", "models", "enabled"} <= set(c) for c in st["agents"]["cli"]),
-                  str([(c["id"], c["installed"]) for c in st["agents"]["cli"]]))
+                  any(v["id"] == "none" for v in st["asr"]["types"]),
+                  str([v["id"] for v in st["asr"]["types"]]))
+            check("设置里不再暴露文件、桌面或任务能力", "agents" not in st, str(list(st)))
 
             # 通道保存：key 跟着通道走，只回显掩码
             r = client.post("/api/settings", json={"llm": {
@@ -192,11 +326,52 @@ def test_api() -> None:
                 "model": "deepseek-chat", "api_key": "sk-selftest-not-real"}})
             changed = r.json().get("changed") or {}
             d = r.json()["llm"]
-            check("通道保存厂商 / base / 模型列表",
-                  changed.get("llm.vendor") == "deepseek"
+            check("LLM 保存 base / 模型列表，传来的 vendor 被忽略",
+                  "llm.vendor" not in changed and "vendor" not in d
                   and d["base_url"] == "https://api.deepseek.com"
                   and [m["id"] for m in d["models"]] == ["deepseek-chat", "deepseek-reasoner"],
                   str(changed))
+            # 换 API 格式：Base URL 还是旧默认值就跟着换；用户自己填的不动
+            r = client.post("/api/settings", json={"llm": {"type": "messages"}})
+            check("换 API 格式时 Base URL 跟着换（还是旧格式默认值）",
+                  r.json()["llm"]["type"] == "messages"
+                  and r.json()["llm"]["base_url"] == "https://api.anthropic.com",
+                  str(r.json()["llm"]["base_url"]))
+            client.post("/api/settings", json={"llm": {"base_url": "http://gw.local/v1"}})
+            r = client.post("/api/settings", json={"llm": {"type": "completions"}})
+            check("用户自己填的 Base URL 不会被换格式冲掉",
+                  r.json()["llm"]["base_url"] == "http://gw.local/v1",
+                  str(r.json()["llm"]["base_url"]))
+            r = client.post("/api/settings/models", json={
+                "channel": "llm", "type": "completions", "base_url": "http://127.0.0.1:9/v1"})
+            check("拉取模型失败时给出原因而不是报错",
+                  r.status_code == 200 and r.json()["ok"] is False and r.json()["error"],
+                  r.text[:120])
+            # 额外请求参数：保存 → 进运行中的大脑；写错 JSON 报 400 且不落盘；不能覆盖保留字段
+            r = client.post("/api/settings", json={"llm": {"extra": '{"enable_thinking": false}'}})
+            br = client.app.state.avatar.brains["completions"]
+            check("额外请求参数保存后进了运行中的大脑，设置接口也回显",
+                  br.conf.get("extra") == {"enable_thinking": False}
+                  and r.json()["llm"]["extra"] == {"enable_thinking": False},
+                  str(br.conf.get("extra")))
+            r = client.post("/api/settings", json={"llm": {"extra": "{not json"}})
+            check("额外请求参数写错 JSON → 400，原值不变",
+                  r.status_code == 400
+                  and client.get("/api/settings").json()["llm"]["extra"] == {"enable_thinking": False},
+                  r.text[:100])
+            r = client.post("/api/settings", json={"llm": {"extra": {"model": "x"}}})
+            check("额外请求参数不能覆盖 model / messages 等保留字段", r.status_code == 400, r.text[:100])
+            r = client.post("/api/settings", json={"llm": {"extra": ""}})
+            check("额外请求参数留空 = 清掉", r.json()["llm"]["extra"] == {}, str(r.json()["llm"]["extra"]))
+            client.post("/api/settings", json={"llm": {
+                "type": "completions", "base_url": "https://api.deepseek.com",
+                "model": "deepseek-chat", "api_key": "sk-selftest-not-real"}})
+            brain = client.app.state.avatar.brains["completions"]
+            check("页面保存的 Base URL / 模型 / Key 立刻进了运行中的大脑",
+                  brain.conf.get("api_key") == "sk-selftest-not-real"
+                  and brain.conf.get("base_url") == "https://api.deepseek.com"
+                  and brain.conf.get("model") == "deepseek-chat",
+                  str({k: brain.conf.get(k) for k in ("base_url", "model")}))
             check("key 跟着通道存在 secrets.json",
                   json.loads((tmp / "secrets.json").read_text(encoding="utf-8"))
                   .get("llm") == "sk-selftest-not-real", str(d.get("has_key")))
@@ -207,11 +382,30 @@ def test_api() -> None:
             check("清空通道 key 会删掉它", r.json()["llm"]["has_key"] is False, "")
 
             # 换厂商：base_url 和模型表自动跟着换
-            r = client.post("/api/settings", json={"tts": {"vendor": "sapi"}})
+            r = client.post("/api/settings", json={"tts": {"type": "sapi"}})
             d = r.json()["tts"]
-            check("换厂商后自动带上该厂商的默认值",
-                  d["vendor"] == "sapi" and d["voice"] == "Microsoft Huihui Desktop",
-                  str((d["vendor"], d["voice"])))
+            check("换 TTS 接口后自动带上该接口的默认音色",
+                  d["type"] == "sapi" and d["voice"] == "Microsoft Huihui Desktop"
+                  and d["local"] is True and "vendor" not in d,
+                  str((d["type"], d["voice"])))
+            # 通用接口：自己填 base_url / 模型 / key，音色按模型取
+            r = client.post("/api/settings", json={"tts": {
+                "type": "qwen-tts", "base_url": "http://gw.local", "api_key": "tts-key-xx",
+                "models": [{"id": "qwen3-tts-flash", "label": "qwen3-tts-flash"}],
+                "model": "qwen3-tts-flash", "voice": "Cherry"}})
+            d = r.json()["tts"]
+            check("TTS 自填 base_url / 模型 / 音色并保存",
+                  d["type"] == "qwen-tts" and d["base_url"] == "http://gw.local"
+                  and d["model"] == "qwen3-tts-flash" and d["voice"] == "Cherry"
+                  and d["has_key"] is True, str({k: d.get(k) for k in ("type", "base_url", "voice")}))
+            tp = client.app.state.tts_provider
+            check("TTS 适配器拿到页面里的 key / 模型 / 地址",
+                  tp.type == "qwen-tts" and tp.conf.get("api_key") == "tts-key-xx"
+                  and tp.conf.get("model") == "qwen3-tts-flash"
+                  and tp.conf.get("base_url") == "http://gw.local",
+                  str({k: tp.conf.get(k) for k in ("model", "base_url")}))
+            client.post("/api/settings", json={"tts": {"api_key": ""}})
+            client.post("/api/settings", json={"tts": {"type": "sapi"}})
             check("换引擎后朗读 provider 立即重建",
                   client.app.state.tts_provider.info()["provider"] == "sapi", "")
 
@@ -225,48 +419,33 @@ def test_api() -> None:
             check("半双工模式下 ASR 恢复", vc["mode"] == "half", str(vc)[:160])
 
             # ASR 关掉：麦克风不可用
-            client.post("/api/settings", json={"asr": {"vendor": "none"}})
+            client.post("/api/settings", json={"asr": {"type": "none"}})
             check("ASR 选 none 后语音输入标记为不可用",
                   client.get("/api/voice/config").json()["asr"]["enabled"] is False,
                   str(client.get("/api/voice/config").json()["asr"]))
-            client.post("/api/settings", json={"asr": {"vendor": "qwen"}})
+            client.post("/api/settings", json={"asr": {"type": "qwen"}})
             vc = client.get("/api/voice/config").json()
+            r = client.get("/api/settings").json()["asr"]
+            check("ASR 设置页有 enabled 标记（麦克风按钮靠它）",
+                  r["enabled"] is True and r["type"] == "qwen" and r["base_url"], str(r)[:140])
             check("ASR 打开后暴露识别模型",
                   vc["asr"]["model"] == "qwen3-asr-flash", str(vc["asr"]))
             r = client.post("/api/asr", content=b"")
             check("空录音被拒", r.status_code == 400, r.text[:80])
 
-            # CLI 模型：选了就进命令行，没选就用 CLI 自己的默认
-            from server.catalog import apply_model
-            check("--model 插在子命令之后",
-                  apply_model(["codex", "exec", "--skip-git-repo-check", "-"], ["-m"], "gpt-5")
-                  == ["codex", "exec", "-m", "gpt-5", "--skip-git-repo-check", "-"], "")
-            check("已有 --model 就替换而不是重复添加",
-                  apply_model(["claude", "-p", "--model", "sonnet"], ["--model"], "opus")
-                  == ["claude", "-p", "--model", "opus"], "")
-            r = client.post("/api/settings", json={
-                "agents": {"cli": {"claude": {"model": "opus"}}}})
-            check("CLI 选模型写进配置", (r.json().get("changed") or {}).get(
-                "agents.cli.claude.model") == "opus", str(r.json().get("changed")))
-
-            # Codex 工具：同步执行并拿回结果（实时语音用它和 Codex 交互）
-            # 用假后端，不依赖本机装的 CLI、也不花 token
-            time.sleep(0.3)
-            res = client.app.state.avatar.actions.run("测试任务", timeout=20)
-            check("Codex 工具返回输出", res.get("ok") is True and "action ok" in res.get("output", ""),
-                  str(res)[:160])
-
-            # 实时语音运行时：没配 key 时不可用，但工具表里要有动手的工具 do_task
+            # 实时语音运行时：没配 key 时不可用，只保留聊天辅助工具
             rt = client.app.state.realtime
             check("realtime 未配 key 时不可用", rt.available is False, str(rt.info()))
-            check("realtime 工具包含 do_task",
-                  any(s.get("name") == "do_task" for s in __import__("server.realtime.tools", fromlist=["TOOL_SCHEMAS"]).TOOL_SCHEMAS),
-                  str(rt.info()))
+            names = {s.get("name") for s in __import__(
+                "server.realtime.tools", fromlist=["TOOL_SCHEMAS"]).TOOL_SCHEMAS}
+            check("realtime 只保留聊天、记忆和表情动作工具",
+                  names == {"remember", "set_emotion", "set_motion"}
+                  and not ({"do_task", "think", "task_status", "schedule"} & names),
+                  str(names))
 
-            # 后台 agent 编排 + 前台自主触发（假 CLI 后端，不花 token）
-            sys.path.insert(0, str(pathlib.Path(__file__).parent))
-            from selftest_agents import agents_suite
-            agents_suite(client, tmp, check)
+            # 伪全双工流水线（假 ASR / 假 TTS）
+            from selftest_voice import voice_suite
+            voice_suite(client, check)
 
             try:
                 with client.websocket_connect("/ws/voice") as ws:
@@ -385,9 +564,13 @@ def test_render() -> None:
 
 
 def main() -> None:
-    test_intent()
+    test_messages_brain()
+    test_extra_params()
+    sys.path.insert(0, str(pathlib.Path(__file__).parent))
+    from selftest_voice import voice_units
+    voice_units(check)
     # 本机 SAPI 默认跳过：这台机器上 Windows 语音引擎偶尔要 40~90 秒，
-    # 会把线程池占满、拖垮后面的 agent 测试。要测就显式加 --sapi。
+    # 会把线程池占满、拖垮后面的接口测试。要测就显式加 --sapi。
     if "--sapi" in sys.argv:
         test_tts()
     test_api()

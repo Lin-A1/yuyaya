@@ -69,6 +69,13 @@ class QwenTTSProvider(TTSProvider):
             raise RuntimeError(f"下载音频失败 HTTP {got.status_code}")
         return _fix_wav_header(got.content)
 
+    def info(self) -> dict:
+        return {"provider": self.type, "enabled": self.available(),
+                "voice": self.conf.get("voice") or DEFAULT_VOICE,
+                "model": self.conf.get("model") or DEFAULT_MODEL,
+                "rate": int(self.conf.get("rate", 0)),
+                "volume": int(self.conf.get("volume", 100))}
+
 
 def _fix_wav_header(data: bytes) -> bytes:
     """服务端返回的 WAV 是流式占位头（长度写成 0x7FFFFFBF），这里改成真实长度。
@@ -83,10 +90,3 @@ def _fix_wav_header(data: bytes) -> bytes:
     if i >= 0:
         struct.pack_into("<I", out, i + 4, len(out) - i - 8)
     return bytes(out)
-
-    def info(self) -> dict:
-        return {"provider": self.type, "enabled": self.available(),
-                "voice": self.conf.get("voice") or DEFAULT_VOICE,
-                "model": self.conf.get("model") or DEFAULT_MODEL,
-                "rate": int(self.conf.get("rate", 0)),
-                "volume": int(self.conf.get("volume", 100))}

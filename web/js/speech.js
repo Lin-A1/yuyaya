@@ -30,6 +30,7 @@ class SpeechPlayer {
     this.closed = new Set();     // 收到 end 的 id
     this.finished = new Set();   // 已经确认播完的 id
     this.running = false;
+    this.mute = false;           // true：口型交给真实音频（语音接管时）
     this.wake = null;
   }
 
@@ -191,12 +192,18 @@ class SpeechPlayer {
     this.onDone();
   }
 
+  /** 口型开合：语音流水线/全双工接管时（mute）由真实音频驱动，这里不再让打字机张嘴。 */
+  _talk(on) {
+    if (this.mute && on) return;
+    this.avatar.setTalking(on, this.channel);
+  }
+
   async _speak(text, gen, marks = []) {
     const voiceDone = this.voice
       ? this.voice.speak(text, this.channel).catch(() => {})
       : Promise.resolve();
     this.sub.textContent = "";
-    this.avatar.setTalking(true, this.channel);
+    this._talk(true);
     let line = "";
     let i = 0;
     for (const ch of text) {
@@ -209,18 +216,18 @@ class SpeechPlayer {
       let delay = 1000 / this.cps;
       if (SOFT_PAUSE.includes(ch)) {
         delay = 220;
-        this.avatar.setTalking(false, this.channel);
+        this._talk(false);
         await this._sleep(delay);
         if (line.length >= this.maxLine * 0.6) line = "";   // 逗号处换屏，读起来更像字幕
-        this.avatar.setTalking(true, this.channel);
+        this._talk(true);
         continue;
       }
       if (SENTENCE_END.includes(ch)) delay = 0;
-      else if (!/[\s\p{P}]/u.test(ch)) this.avatar.syllable();
+      else if (!this.mute && !/[\s\p{P}]/u.test(ch)) this.avatar.syllable();
       await this._sleep(delay);
     }
     marks.forEach((m) => this.avatar.motion(m.motion));
-    this.avatar.setTalking(false, this.channel);
+    this._talk(false);
     this.avatar.beat();
     await voiceDone;
     if (gen !== this.gen) return;

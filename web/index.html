@@ -49,10 +49,6 @@
           <div class="row"><span>FACTS</span><b id="hud-facts">0</b></div>
           <div class="row"><span>LINK</span><b id="hud-link">OFFLINE</b></div>
         </section>
-        <section>
-          <h6>TASK QUEUE</h6>
-          <div class="row"><span>TASKS</span><b><span id="hud-jobs">0</span> · <span id="hud-job">—</span></b></div>
-        </section>
       </div>
 
       <div class="hud-right">
@@ -100,7 +96,7 @@
       <div class="cfg-modebar-label">语音模式<span>只能选一个</span></div>
       <label class="cfg-mode-opt" data-mode="half">
         <input type="radio" name="cfg-mode" value="half">
-        <b>半双工</b><small>打字或说话 → LLM 出字 → TTS 念出来</small>
+        <b>伪全双工</b><small>ASR → LLM → TTS 流水线，麦克风常开，开口即可打断</small>
       </label>
       <label class="cfg-mode-opt" data-mode="full">
         <input type="radio" name="cfg-mode" value="full">
@@ -112,11 +108,10 @@
       <button type="button" data-tab="half">对话与语音</button>
       <button type="button" data-tab="full">全双工</button>
       <button type="button" data-tab="persona">人设</button>
-      <button type="button" data-tab="agents">Agent</button>
     </nav>
 
     <div class="cfg-page" data-page="half">
-      <p class="cfg-lead" id="cfg-half-lead">LLM 出字 → TTS 念出来 → ASR 收你的话。三件各自独立，可以分别换。</p>
+      <p class="cfg-lead" id="cfg-half-lead">你说话 → ASR 转文字 → LLM 回答 → TTS 念出来。麦克风常开，开口即可打断；三件各自独立，可以分别换。</p>
       <div id="cfg-chan-llm"></div>
       <div id="cfg-chan-tts"></div>
       <div id="cfg-chan-asr"></div>
@@ -151,40 +146,19 @@
       <pre id="cfg-p-rules" class="cfg-pre"></pre>
     </div>
 
-    <div class="cfg-page" data-page="agents" hidden>
-      <p class="cfg-lead">命令行 agent 负责"动手"，说话仍由她自己完成。装了的才能选。</p>
-      <label class="cfg-switch">
-        <input type="checkbox" id="cfg-agents-on">
-        <span>启用后台 agent</span>
-        <small id="cfg-agents-state"></small>
-      </label>
-      <div class="cfg-seg" id="cfg-agent-modes"></div>
-      <label class="cfg-row" id="cfg-agent-active-row"><span>指定</span>
-        <select id="cfg-agent-active"></select></label>
-      <h4>可用的命令行</h4>
-      <div id="cfg-clis"></div>
-      <label class="cfg-switch cfg-switch--sub">
-        <input type="checkbox" id="cfg-desktop-on">
-        <span>允许操作桌面</span>
-        <small>Codex 解除沙箱（danger-full-access），只给桌面类任务用；权限很大，风险自担。</small>
-      </label>
-    </div>
-
     <footer>
       <small id="cfg-status"></small>
-      <button type="button" class="cfg-ghost" id="cfg-refresh" title="重新探测命令行 agent">重新探测</button>
       <button type="button" class="cfg-primary" id="cfg-save">保存</button>
     </footer>
   </div>
 </div>
 
-<script src="js/rig.js?v=6"></script>
-<script src="js/avatar.js?v=6"></script>
-<script src="js/remote.js?v=6"></script>
-<script src="js/speech.js?v=6"></script>
-<script src="js/voice.js?v=6"></script>
-<script src="js/realtime.js?v=6"></script>
-<script src="js/settings.js?v=6"></script>
-<script src="js/main.js?v=6"></script>
+<script src="js/rig.js?v=7"></script>
+<script src="js/avatar.js?v=7"></script>
+<script src="js/remote.js?v=7"></script>
+<script src="js/speech.js?v=7"></script>
+<script src="js/duplex.js?v=7"></script>
+<script src="js/settings.js?v=7"></script>
+<script src="js/main.js?v=7"></script>
 </body>
 </html>

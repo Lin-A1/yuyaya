@@ -41,10 +41,6 @@ class Brain:
             return True, ""
         if kind in ("openai", "completions", "responses", "anthropic", "messages",
                     "gemini", "generateContent"):
-            if kind in ("anthropic", "messages"):
-                import importlib.util
-                if importlib.util.find_spec("anthropic") is None:
-                    return False, "需要 pip install anthropic"
             if c.get("api_key"):
                 return True, ""
             env = c.get("api_key_env") or ("ANTHROPIC_API_KEY" if kind in ("anthropic", "messages")
