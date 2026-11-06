@@ -28,12 +28,13 @@ import wave
 import requests
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
+BASE = "http://127.0.0.1:8848"
 EDGE = r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
 
 
 # ---------------------------------------------------------------- 音轨
 
-def synth(text: str, voice: str = "qiaoxiaojiao_v3.1", base: str = "http://127.0.0.1:8848") -> bytes:
+def synth(text: str, voice: str = "qiaoxiaojiao_v3.1", base: str = BASE) -> bytes:
     r = requests.post(f"{base}/api/tts", json={"text": text, "voice": voice,
                                               "provider": "qwen-realtime"}, timeout=120)
     r.raise_for_status()
@@ -48,15 +49,19 @@ def wav_stats(data: bytes) -> tuple[int, int, float]:
 # ---------------------------------------------------------------- 场景
 
 SCENES = [
-    # (说话内容, 情绪, 动作, 之后停多久)
-    ("你好呀，我是鱼丫丫。", "happy", "hop", 0.9),
-    ("住在这台旧电脑里。", "neutral", None, 0.8),
-    ("想聊什么都可以。", "shy", "tilt", 0.8),
-    ("也能让我帮你做事。", "thinking", "nod", 0.9),
-    ("说完我就去弄。", "neutral", "lean", 0.7),
-    ("弄好了会告诉你。", "happy", "hop", 1.0),
-    ("随时可以打断我。", "surprised", "startle", 0.9),
-    ("那我先待机啦。", "neutral", "sigh", 1.2),
+    # (说话内容 or "", 情绪, 动作, 之后停多久, 特殊事件)
+    # 特殊事件：job=真的派个后台任务  memory=真的记住一件事  cut=真的清字幕(模拟被打断)
+    ("你好呀，我是鱼丫丫。", "happy", "hop", 0.8, None),
+    ("住在旧电脑屏幕里。", "neutral", None, 0.6, None),
+    ("什么都能聊。", "shy", "tilt", 0.7, None),
+    ("也能替你做事——", "thinking", "nod", 0.5, None),
+    ("", "neutral", None, 2.6, "job"),
+    ("好了，笔记都写好了。", "happy", "hop", 0.8, None),
+    ("你喜欢什么，我也会记住。", "shy", "lean", 0.7, None),
+    ("", "neutral", None, 1.0, "memory"),
+    ("随时可以打断我。", "surprised", "startle", 0.7, None),
+    ("", "neutral", None, 0.8, "cut"),
+    ("那我先待机啦。", "neutral", "sigh", 1.0, None),
 ]
 
 OPENING = 1.6      # 开场留白（大字标题）
@@ -64,12 +69,13 @@ TITLE_FADE = 1.0   # 标题淡出时长
 TAIL = 2.2         # 结尾停留（落款）
 
 
-def build_timeline(fps: int, durations: list[float]) -> tuple[list[dict], float]:
+def build_timeline(durations: list[float]) -> tuple[list[dict], float]:
     """把每个场景排到时间轴上：字幕从 t 开始，按字数均分推进。"""
     t = OPENING
     cues = []
-    for (text, emo, motion, hold), dur in zip(SCENES, durations):
-        cues.append({"start": t, "dur": dur, "text": text, "emotion": emo, "motion": motion})
+    for (text, emo, motion, hold, event), dur in zip(SCENES, durations):
+        cues.append({"start": t, "dur": dur, "text": text, "emotion": emo,
+                     "motion": motion, "hold": hold, "event": event})
         t += dur + hold
     return cues, t + TAIL
 
@@ -158,7 +164,7 @@ def page_script(cues: list[dict], total: float) -> str:
     const sub = q('#subtitle');
     if (sub) {
       // 保证字幕完整落在画面里（默认贴底 9.5%，录制窗口比例不同会被裁）
-      sub.style.bottom = '13%';
+      sub.style.bottom = '33%';
       if (!showing) sub.textContent = '';
       else {
         const chars = [...showing.text];
@@ -220,6 +226,24 @@ class Recorder:
             pass
 
 
+# ---------------------------------------------------------------- 真实事件
+#
+# 片子里的"干活"和"记住"是真的发生：提交一个后台任务、写一条长期记忆。
+
+def submit_job(task: str) -> int:
+    r = requests.post(f"{BASE}/api/jobs", json={"task": task}, timeout=30)
+    r.raise_for_status()
+    return r.json()["job_id"]
+
+
+def job_state(jid: int) -> dict:
+    return requests.get(f"{BASE}/api/jobs/{jid}", timeout=20).json()
+
+
+def remember(text: str) -> None:
+    requests.post(f"{BASE}/api/memory", json={"text": text}, timeout=20)
+
+
 def launch(port: int, url: str, width: int, height: int):
     profile = tempfile.mkdtemp(prefix="edge_promo_")
     proc = subprocess.Popen([
@@ -252,7 +276,7 @@ def main() -> None:
     ap.add_argument("--voice", default="qiaoxiaojiao_v3.1")
     args = ap.parse_args()
 
-    base = "http://127.0.0.1:8848"
+    base = BASE
     try:
         requests.get(base + "/api/settings", timeout=5)
     except Exception as e:
@@ -262,6 +286,10 @@ def main() -> None:
     print(f"[1/5] 合成配音 → {tmp}")
     wavs, durations = [], []
     for i, (text, *_rest) in enumerate(SCENES):
+        if not text:
+            durations.append(0.0)
+            wavs.append(None)
+            continue
         data = synth(text, args.voice, base)
         f = tmp / f"line{i}.wav"
         f.write_bytes(data)
@@ -270,7 +298,7 @@ def main() -> None:
         durations.append(dur)
         print(f"      「{text}」 {dur:.2f}s")
 
-    cues, total = build_timeline(args.fps, durations)
+    cues, total = build_timeline(durations)
     frames_total = int(total * args.fps)
     print(f"[2/5] 时间轴 {total:.1f}s / {frames_total} 帧 @ {args.fps}fps")
 
@@ -287,27 +315,42 @@ def main() -> None:
                 break
             time.sleep(0.5)
         print("[3/5] 页面就绪，安装虚拟时钟")
-        # 先让立绘真正画一帧出来，确认纹理已加载
-        rec.ev("avatar._frame(performance.now()); 1")
-        painted = rec.ev("""(() => {
-            const c = document.querySelector('#char-body canvas');
-            if (!c) return 'no canvas';
-            const g = c.getContext('webgl2');
-            return g ? 'canvas ' + c.width + 'x' + c.height : 'no gl';
-        })()""")
-        print("      立绘:", painted)
         print("      ", rec.ev(SETUP))
         print("      ", rec.ev(page_script(cues, total)))
         rec.ev("avatar.setState('idle'); 1")
+        # rAF 被停掉了，这里必须主动画第一帧，否则画布是空的
+        rec.ev("window.__applyAt(0.02); 1")
+        print("      立绘:", rec.ev("""(() => {
+            const c = document.querySelector('#char-body canvas');
+            return c ? 'canvas ' + c.width + 'x' + c.height : 'no canvas';
+        })()"""))
 
+        job_id = None
         t0 = time.time()
         for i in range(frames_total):
             t = i / args.fps
             rec.ev(f"window.__applyAt({t:.4f})")
             (frames_dir / f"{i:05d}.jpg").write_bytes(rec.shot())
+            # 场景开始时触发真实事件（片子里演的是真本事）
+            for c in cues:
+                if abs(c["start"] - t) < (1 / args.fps) and not c.get("fired"):
+                    c["fired"] = True
+                    if c["event"] == "job":
+                        job_id = submit_job("在 state/promo-demo.txt 里写一行：动手成功")
+                        print(f"      [{t:.1f}s] 真的派了个活：job #{job_id}")
+                    elif c["event"] == "memory":
+                        remember("用户喜欢在深夜写代码")
+                        print(f"      [{t:.1f}s] 真的记住了一件事")
+                    elif c["event"] == "cut":
+                        rec.ev("""(() => {
+                            const s = document.querySelector('#subtitle');
+                            if (s) s.textContent = '';
+                        })()""")
+                        print(f"      [{t:.1f}s] 模拟被打断")
             if i % 60 == 0:
                 done = i / max(time.time() - t0, 0.001)
-                print(f"      帧 {i}/{frames_total}  ({done:.1f} fps 抓取)", flush=True)
+                extra = f"  job={job_state(job_id)['status']}" if job_id else ""
+                print(f"      帧 {i}/{frames_total}  ({done:.1f} fps 抓取){extra}", flush=True)
         rec.close()
         print(f"[4/5] 抓帧完成，用时 {time.time() - t0:.0f}s")
     finally:
@@ -322,21 +365,28 @@ def main() -> None:
     import imageio_ffmpeg
     ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
     # 把每句配音按时间轴拼成一条 24k 单声道音轨
-    rate, ch = wavs[0][1], wavs[0][2]
+    # 把每句配音按时间轴位置拼成一条 24k 单声道音轨
+    rate = 24000
     mix = tmp / "voice.wav"
     with wave.open(str(mix), "wb") as out:
-        out.setnchannels(ch)
+        out.setnchannels(1)
         out.setsampwidth(2)
         out.setframerate(rate)
-        out.writeframes(b"\x00\x00" * int(rate * OPENING))
-        for (f, _r, _c), cue in zip(wavs, cues):
+        cursor = 0
+        for clip, cue in zip(wavs, cues):
+            start = int(rate * cue["start"])
+            if start > cursor:                       # 中间的停顿补静音
+                out.writeframes(b"\x00\x00" * (start - cursor))
+                cursor = start
+            if clip is None:                         # 这一段没台词
+                continue
+            f = clip[0]
             with wave.open(str(f)) as w:
-                out.writeframes(w.readframes(w.getnframes()))
-            gap = cue["dur"] - wav_stats(f.read_bytes())[2] + 0.0
-            pad = max(0.0, 0.0)
-            # 场景之间的停顿用结尾的留白补上
-            out.writeframes(b"\x00\x00" * int(rate * (SCENES[cues.index(cue)][3])))
-        out.writeframes(b"\x00\x00" * int(rate * TAIL))
+                raw = w.readframes(w.getnframes())
+            out.writeframes(raw)
+            cursor += len(raw)
+        # 结尾留白
+        out.writeframes(b"\x00\x00" * int(rate * (TAIL + 1.0)))
 
     out_path = pathlib.Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)

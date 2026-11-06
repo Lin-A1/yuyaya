@@ -227,16 +227,29 @@ body.obs { background: transparent; }
 }
 .cfg-close:hover { color: #e8ece9; background: rgba(255, 255, 255, .08); }
 
+/* 语音模式：只能二选一，放在最上面 */
 .cfg-modebar {
-  margin-left: auto; display: flex; gap: 2px;
-  background: rgba(255, 255, 255, .06); border-radius: 8px; padding: 3px;
+  display: grid; grid-template-columns: auto 1fr 1fr; align-items: stretch; gap: 8px;
+  padding: 12px 18px; border-bottom: 1px solid rgba(255, 255, 255, .07);
+  background: rgba(255, 255, 255, .025);
 }
-.cfg-modebar button {
-  font: inherit; font-size: 12px; cursor: pointer; padding: 5px 14px;
-  color: #8b9994; background: transparent; border: 0; border-radius: 6px; transition: .15s;
+.cfg-modebar-label {
+  display: flex; flex-direction: column; justify-content: center;
+  font-size: 11.5px; color: #8b9994; padding-right: 6px;
 }
-.cfg-modebar button:hover { color: #d8e4df; }
-.cfg-modebar button.on { color: #0d1411; background: #7fe1b2; font-weight: 600; }
+.cfg-modebar-label span { font-size: 10px; opacity: .55; margin-top: 2px; }
+.cfg-mode-opt {
+  position: relative; display: flex; flex-direction: column; gap: 2px;
+  padding: 8px 12px; border-radius: 9px; cursor: pointer;
+  background: rgba(255, 255, 255, .035); border: 1px solid rgba(255, 255, 255, .1);
+  transition: .15s;
+}
+.cfg-mode-opt:hover { background: rgba(255, 255, 255, .07); }
+.cfg-mode-opt.on { border-color: rgba(127, 225, 178, .7); background: rgba(127, 225, 178, .1); }
+.cfg-mode-opt input { position: absolute; opacity: 0; pointer-events: none; }
+.cfg-mode-opt b { font-size: 12.5px; font-weight: 600; }
+.cfg-mode-opt.on b { color: #a8f0c6; }
+.cfg-mode-opt small { font-size: 10.5px; opacity: .5; line-height: 1.4; }
 
 /* 页签 */
 .cfg-tabs {

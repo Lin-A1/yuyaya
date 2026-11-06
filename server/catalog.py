@@ -171,6 +171,8 @@ def _models(*ids: str) -> list[dict]:
     return [{"id": i, "label": i} for i in ids]
 
 
+# LLM 只按**协议**分类；下面是常见服务商的现成参数，页面上点一下自动填表，
+# 但你完全可以只填 base_url + model + key 去接任何没列出来的服务。
 LLM_PRESETS = [
     {"id": "deepseek", "label": "DeepSeek", "type": "completions",
      "base_url": "https://api.deepseek.com", "model": "deepseek-chat",
@@ -179,7 +181,7 @@ LLM_PRESETS = [
      "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1", "model": "qwen-plus",
      "api_key_env": "DASHSCOPE_API_KEY",
      "models": ["qwen-plus", "qwen-max", "qwen-turbo", "qwen3-max"]},
-    {"id": "kimi", "label": "Kimi", "type": "completions",
+    {"id": "kimi", "label": "Kimi（月之暗面）", "type": "completions",
      "base_url": "https://api.moonshot.cn/v1", "model": "moonshot-v1-8k",
      "api_key_env": "MOONSHOT_API_KEY",
      "models": ["moonshot-v1-8k", "moonshot-v1-32k", "kimi-k3"]},
@@ -193,10 +195,17 @@ LLM_PRESETS = [
     {"id": "openai", "label": "OpenAI", "type": "responses",
      "base_url": "https://api.openai.com/v1", "model": "gpt-5",
      "api_key_env": "OPENAI_API_KEY", "models": ["gpt-5", "gpt-5-mini", "gpt-4.1"]},
+    {"id": "azure-openai", "label": "Azure OpenAI", "type": "completions",
+     "base_url": "https://YOUR-RESOURCE.openai.azure.com/openai/deployments/YOUR-DEPLOYMENT",
+     "model": "gpt-4o", "api_key_env": "AZURE_OPENAI_API_KEY",
+     "models": ["gpt-4o", "gpt-4o-mini"]},
     {"id": "claude", "label": "Claude API", "type": "messages",
      "base_url": "https://api.anthropic.com", "model": "claude-opus-5-5",
      "api_key_env": "ANTHROPIC_API_KEY",
      "models": ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"]},
+    {"id": "moonshot-anthropic", "label": "Kimi（Anthropic 协议）", "type": "messages",
+     "base_url": "https://api.moonshot.cn/anthropic", "model": "kimi-k2-turbo-preview",
+     "api_key_env": "MOONSHOT_API_KEY", "models": ["kimi-k2-turbo-preview"]},
     {"id": "gemini", "label": "Google Gemini", "type": "generateContent",
      "base_url": "https://generativelanguage.googleapis.com", "model": "gemini-2.5-flash",
      "api_key_env": "GEMINI_API_KEY",
@@ -204,6 +213,9 @@ LLM_PRESETS = [
     {"id": "ollama", "label": "Ollama（本机）", "type": "completions",
      "base_url": "http://127.0.0.1:11434/v1", "model": "qwen2.5:7b", "api_key_env": "",
      "models": ["qwen2.5:7b", "qwen2.5:14b", "llama3.1:8b"]},
+    {"id": "lmstudio", "label": "LM Studio（本机）", "type": "completions",
+     "base_url": "http://127.0.0.1:1234/v1", "model": "local-model", "api_key_env": "",
+     "models": []},
     {"id": "demo", "label": "离线演示", "type": "demo",
      "base_url": "", "model": "", "api_key_env": "",
      "models": [], "note": "不联网、不用 key，台词写死，用来调形象。"},

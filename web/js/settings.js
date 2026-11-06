@@ -202,8 +202,11 @@ const SettingsPanel = {
 
   renderMode() {
     const mode = this.data.mode || "half";
-    document.querySelectorAll("#cfg-modebar button").forEach((b) => {
-      b.classList.toggle("on", b.dataset.mode === mode);
+    document.querySelectorAll("#cfg-modebar .cfg-mode-opt").forEach((el) => {
+      const on = el.dataset.mode === mode;
+      el.classList.toggle("on", on);
+      const r = el.querySelector('input[type="radio"]');
+      if (r) r.checked = on;
     });
     const onFull = mode === "full";
     const lead = $("#cfg-half-lead");
@@ -416,14 +419,17 @@ function setupSettings() {
   document.querySelectorAll(".cfg-tabs button").forEach((b) => {
     b.addEventListener("click", () => SettingsPanel.showTab(b.dataset.tab));
   });
-  document.querySelectorAll("#cfg-modebar button").forEach((b) => {
-    b.addEventListener("click", () => {
-      SettingsPanel.data.mode = b.dataset.mode;
+  document.querySelectorAll("#cfg-modebar .cfg-mode-opt").forEach((el) => {
+    const pick = () => {
+      SettingsPanel.data.mode = el.dataset.mode;
       SettingsPanel.renderMode();
-      SettingsPanel.showTab(b.dataset.mode === "full" ? "full" : "half");
-      SettingsPanel.setStatus("已切到" + (b.dataset.mode === "full" ? "全双工" : "半双工")
+      SettingsPanel.showTab(el.dataset.mode === "full" ? "full" : "half");
+      SettingsPanel.setStatus("已切到" + (el.dataset.mode === "full" ? "全双工" : "半双工")
                               + "，记得点保存");
-    });
+    };
+    el.addEventListener("click", pick);
+    const r = el.querySelector('input[type="radio"]');
+    if (r) r.addEventListener("change", pick);
   });
   $("#cfg-p-default").addEventListener("click", () => {
     $("#cfg-p-identity").value = (SettingsPanel.data.persona || {}).default_identity || "";

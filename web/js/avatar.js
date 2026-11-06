@@ -99,6 +99,9 @@ class Avatar {
     this.body.appendChild(canvas);
     this.canvas = canvas;
     this.gfx = new Renderer(canvas, this.rig);
+    // 时间基准先定下来：贴图要等一会儿，这期间如果有别的东西驱动了 _frame，
+    // t0 还没设会让 (now - t0) 变成 NaN。
+    this.t0 = this.last = performance.now();
     const jobs = [];
     for (const [emo, e] of Object.entries(this.spr.emotions)) {
       jobs.push(this.gfx.texture(e.src));
@@ -241,9 +244,16 @@ class Avatar {
 
   // ---------- 每帧 ----------
   _frame(now) {
-    const dt = Math.min((now - this.last) / 1000, 1 / 20);
+    // dt 不能为负或 NaN：时钟被外部改写（比如录屏脚本换成虚拟时钟）时可能倒流，
+    // 一旦 dt 变成 NaN，弹簧会被污染成 NaN，立绘就再也画不出来了。
+    if (!Number.isFinite(now)) now = this.last;
+    const raw = (now - this.last) / 1000;
+    const dt = Number.isFinite(raw) ? Math.max(0, Math.min(raw, 1 / 20)) : 0;
     this.last = now;
-    const t = (now - this.t0) / 1000;
+    // t0 在 load() 里（等贴图加载完）才设好；万一第一帧来得更早，
+    // 用 last 兜底，否则 t = (now - undefined) / 1000 = NaN，
+    // 待机正弦全变 NaN，弹簧被污染，立绘就再也画不出来了。
+    const t = (now - (this.t0 ?? this.last)) / 1000;
     this._face(now, dt);
     const p = this._pose(now, t, dt);
     const remote = this.remote && this.remote.ready;
@@ -342,8 +352,9 @@ class Avatar {
       MOTIONS[m.name].f(u, tgt);
       return true;
     });
-    // 弹簧积分（细分步长，保证稳定）
-    const sp = this.sp, n = Math.ceil(dt / (1 / 120)), h = dt / n;
+    // 弹簧积分（细分步长，保证稳定）。
+    // n 至少为 1：dt 为 0 时 ceil(0)=0 会让 h = 0/0 = NaN，弹簧一旦 NaN 就再也画不出来了。
+    const sp = this.sp, n = Math.max(1, Math.ceil(dt / (1 / 120))), h = dt / n;
     for (let i = 0; i < n; i++) {
       sp.roll.step(tgt.roll, h); sp.yaw.step(tgt.yaw, h); sp.pitch.step(tgt.pitch, h);
       sp.lean.step(tgt.lean, h); sp.ear.step(tgt.ear, h);
@@ -445,12 +456,14 @@ class Renderer {
     for (const name of ["uSize", "uView", "uBase0", "uMouth0", "uEye0", "uBase1", "uMouth1", "uEye1",
                         "uMouthR0", "uEyeR0", "uMouthR1", "uEyeR1", "uEyeA0", "uEyeA1", "uMix"])
       this.u[name] = gl.getUniformLocation(prog, name);
-    ["uBase0", "uMouth0", "uEye0", "uBase1", "uMouth1", "uEye1"].forEach((n, i) => gl.uniform1i(this.u[n], i));
+    // 纹理单元：base0=0 mouth0=1 eye0=2 base1=3 mouth1=4 eye1=5
+    this.texUnit = { uBase0: 0, uMouth0: 1, uEye0: 2, uBase1: 3, uMouth1: 4, uEye1: 5 };
+    for (const [n, unit] of Object.entries(this.texUnit)) gl.uniform1i(this.u[n], unit);
     gl.uniform2f(this.u.uSize, rig.W, rig.H);
     const W = 1 + MARGIN.l + MARGIN.r, H = 1 + MARGIN.t + MARGIN.b;
     gl.uniform4f(this.u.uView, 2 / W, -2 / H, (2 * MARGIN.l) / W - 1, 1 - (2 * MARGIN.t) / H);
 
-    const vao = gl.createVertexArray();
+    const vao = this.vao = gl.createVertexArray();
     gl.bindVertexArray(vao);
     const attr = (name, data, usage) => {
       const buf = gl.createBuffer();
@@ -493,7 +506,12 @@ class Renderer {
     const gl = this.gl, c = this.canvas, dpr = Math.min(window.devicePixelRatio || 1, 2);
     const w = Math.round(c.clientWidth * dpr), h = Math.round(c.clientHeight * dpr);
     if (!w || !h) return;
-    if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
+    if (c.width !== w || c.height !== h) {
+      // 改 canvas 尺寸会重置整个 WebGL 上下文状态（program / VAO / 纹理绑定全丢），
+      // 必须重新绑定一次，否则这一帧什么都画不出来。
+      c.width = w; c.height = h;
+      this._bindState();
+    }
     gl.viewport(0, 0, w, h);
     gl.clearColor(0, 0, 0, 0);
     gl.clear(gl.COLOR_BUFFER_BIT);
@@ -511,5 +529,18 @@ class Renderer {
     });
     gl.uniform1f(this.u.uMix, mix);
     gl.drawElements(gl.TRIANGLES, this.rig.index.length, gl.UNSIGNED_SHORT, 0);
+  }
+
+  /** 重新绑定 program / VAO / uniform —— canvas 尺寸变化后必须调用 */
+  _bindState() {
+    const gl = this.gl;
+    gl.useProgram(this.prog);
+    gl.bindVertexArray(this.vao);
+    for (const [name, unit] of Object.entries(this.texUnit || {})) {
+      gl.uniform1i(this.u[name], unit);
+    }
+    gl.uniform2f(this.u.uSize, this.rig.W, this.rig.H);
+    const W = 1 + MARGIN.l + MARGIN.r, H = 1 + MARGIN.t + MARGIN.b;
+    gl.uniform4f(this.u.uView, 2 / W, -2 / H, (2 * MARGIN.l) / W - 1, 1 - (2 * MARGIN.t) / H);
   }
 }

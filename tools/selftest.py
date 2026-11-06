@@ -8,6 +8,8 @@ import sys
 import tempfile
 import time
 
+import requests
+
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 for _s in (sys.stdout, sys.stderr):
     if hasattr(_s, "reconfigure"):
@@ -270,10 +272,110 @@ def test_api() -> None:
             os.environ["YUYAYA_STATE"] = old_state
 
 
+def test_render() -> None:
+    """渲染自检：立绘必须真的画出来。
+
+    踩过的坑：改 canvas 尺寸会重置整个 WebGL 状态（program / VAO / 纹理绑定），
+    那一帧就什么都画不出来。浏览器里 rAF 每帧重绘所以看不出问题，录屏/截图就会白屏。
+    """
+    import json
+    import shutil
+    import subprocess
+    import tempfile
+    import time
+
+    edge = r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
+    if not os.path.exists(edge):
+        print("[ SKIP ] 找不到 Edge，跳过渲染自检")
+        return
+    try:
+        import websocket
+    except Exception as e:
+        check("websocket", False, str(e))
+        return
+
+    profile = tempfile.mkdtemp(prefix="yuyaya-render-")
+    port = 9406
+    proc = subprocess.Popen([
+        edge, "--headless=new", f"--remote-debugging-port={port}", f"--user-data-dir={profile}",
+        "--no-first-run", "--use-angle=swiftshader", "--enable-unsafe-swiftshader",
+        "--window-size=1600,900", "http://127.0.0.1:8848/?obs=1",
+    ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        ws_url = None
+        for _ in range(40):
+            try:
+                for t in requests.get(f"http://127.0.0.1:{port}/json", timeout=2).json():
+                    if t.get("type") == "page" and "8848" in t.get("url", ""):
+                        ws_url = t["webSocketDebuggerUrl"]
+            except Exception:
+                pass
+            if ws_url:
+                break
+            time.sleep(1)
+        if not ws_url:
+            check("打开页面", False, "找不到标签页（服务没起？）")
+            return
+        ws = websocket.create_connection(ws_url, timeout=60)
+        nid = [0]
+
+        def ev(expr):
+            nid[0] += 1
+            ws.send(json.dumps({"id": nid[0], "method": "Runtime.evaluate",
+                                "params": {"expression": expr, "returnByValue": True,
+                                           "userGesture": True}}))
+            while True:
+                r = json.loads(ws.recv())
+                if r.get("id") == nid[0]:
+                    res = (r.get("result") or {}).get("result", {})
+                    return res.get("value")
+
+        for _ in range(60):
+            if ev("typeof window.avatar === 'object'"):
+                break
+            time.sleep(0.5)
+        time.sleep(2.5)     # 让 rAF 先稳定跑几帧
+
+        painted = """(()=>{const c=document.querySelector('#char-body canvas');
+          if(!c) return -1; const g=c.getContext('webgl2'); const px=new Uint8Array(4); let n=0;
+          for(let x=20;x<c.width-20;x+=25) for(let y=20;y<c.height-20;y+=25){
+            g.readPixels(x,y,1,1,g.RGBA,g.UNSIGNED_BYTE,px); if(px[3]>8) n++; }
+          return n;})()"""
+        before = ev(f"(()=>{{avatar._frame(performance.now());return {painted}}})()")
+        check("立绘真的画出来了", isinstance(before, int) and before > 0, f"{before} 个采样点非空")
+
+        # 模拟窗口缩放 / 分辨率变化：改 canvas 尺寸会重置 WebGL 状态
+        ev("""(()=>{const c=document.querySelector('#char-body canvas');
+          c.width=Math.round(c.width*1.3); c.height=Math.round(c.height*1.3); return 1})()""")
+        after = ev(f"(()=>{{avatar._frame(performance.now());return {painted}}})()")
+        check("画布尺寸变化后仍然能画出来", isinstance(after, int) and after > 0, f"{after} 个采样点非空")
+
+        # 虚拟时钟 + 贴图未就绪：第一帧不能让姿态变成 NaN
+        # （t0 在 load() 等贴图时才设好，早一步算出来的 t 是 NaN，弹簧会被污染）
+        ev("""(()=>{window.__vt=performance.now(); performance.now=()=>window.__vt;
+          window.requestAnimationFrame=()=>0; avatar.t0=undefined; return 1})()""")
+        for _ in range(5):
+            ev("window.__vt+=33.4; avatar._frame(window.__vt)")
+        nan = ev("""(()=>{const p=avatar._pose(window.__vt,1,0.033);
+          const bad=[p.roll,p.yaw,p.pitch,p.lean].filter(v=>!Number.isFinite(v));
+          return JSON.stringify({bad:bad.length,
+            springBad:!Number.isFinite(avatar.sp.roll.x)})})()""")
+        check("时钟异常时姿态不会变成 NaN", '"bad":0' in nan and '"springBad":false' in nan, nan)
+        ws.close()
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=10)
+        except Exception:
+            proc.kill()
+        shutil.rmtree(profile, ignore_errors=True)
+
+
 def main() -> None:
     test_intent()
     test_tts()
     test_api()
+    test_render()
     print("\n全部通过" if not fails else f"\n{fails} 项失败")
     raise SystemExit(1 if fails else 0)
 

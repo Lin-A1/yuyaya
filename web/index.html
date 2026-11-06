@@ -94,11 +94,19 @@
     <header>
       <button type="button" class="cfg-close" id="cfg-close" title="关闭">×</button>
       <h3>设置</h3>
-      <div class="cfg-modebar" id="cfg-modebar">
-        <button type="button" data-mode="full">全双工</button>
-        <button type="button" data-mode="half">半双工</button>
-      </div>
     </header>
+
+    <div class="cfg-modebar" id="cfg-modebar">
+      <div class="cfg-modebar-label">语音模式<span>只能选一个</span></div>
+      <label class="cfg-mode-opt" data-mode="half">
+        <input type="radio" name="cfg-mode" value="half">
+        <b>半双工</b><small>打字或说话 → LLM 出字 → TTS 念出来</small>
+      </label>
+      <label class="cfg-mode-opt" data-mode="full">
+        <input type="radio" name="cfg-mode" value="full">
+        <b>全双工</b><small>音频级实时对话，随时插话打断</small>
+      </label>
+    </div>
 
     <nav class="cfg-tabs">
       <button type="button" data-tab="half">对话与语音</button>
@@ -170,13 +178,13 @@
   </div>
 </div>
 
-<script src="js/rig.js"></script>
-<script src="js/avatar.js"></script>
-<script src="js/remote.js"></script>
-<script src="js/speech.js"></script>
-<script src="js/voice.js"></script>
-<script src="js/realtime.js"></script>
-<script src="js/settings.js"></script>
-<script src="js/main.js"></script>
+<script src="js/rig.js?v=6"></script>
+<script src="js/avatar.js?v=6"></script>
+<script src="js/remote.js?v=6"></script>
+<script src="js/speech.js?v=6"></script>
+<script src="js/voice.js?v=6"></script>
+<script src="js/realtime.js?v=6"></script>
+<script src="js/settings.js?v=6"></script>
+<script src="js/main.js?v=6"></script>
 </body>
 </html>
