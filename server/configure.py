@@ -253,17 +253,22 @@ def _model_from_cmd(cmd: list[str], agent_id: str) -> str:
 
 # ---------------------------------------------------------------- 解析
 
-def resolve(conf: dict) -> dict:
-    """摊平成各模块直接能用的字典。**模式互斥在这里落地**。"""
+def resolve(conf: dict, keys: dict | None = None) -> dict:
+    """摊平成各模块直接能用的字典。**模式互斥在这里落地**。
+
+    ``keys`` 是 ``settings.key_for`` 的映射 ``{通道: key}``；给了就写进各段，
+    适配器优先用 ``api_key``，没有才回去读环境变量（兼容老配置）。
+    """
     conf, _ = migrate(conf)
+    keys = keys or {}
     voice = conf.get("voice") or {}
     full = voice.get("full") or {}
     half = voice.get("half") or {}
     mode = conf.get("mode") if conf.get("mode") in ("full", "half") else "half"
 
-    llm = _llm_config(half.get("llm") or {})
-    tts = _tts_config(half.get("tts") or {})
-    asr = _asr_config(half.get("asr") or {})
+    llm = _llm_config(half.get("llm") or {}, keys.get("llm", ""))
+    tts = _tts_config(half.get("tts") or {}, keys.get("tts", ""))
+    asr = _asr_config(half.get("asr") or {}, keys.get("asr", ""))
     agents = _agents_config(conf.get("agents") or {})
 
     # 全双工开着时，半双工的 LLM / ASR 不参与（TTS 也不说话，全双工自己出声）
@@ -279,8 +284,9 @@ def resolve(conf: dict) -> dict:
         "asr": asr if not active_full else {**asr, "enabled": False, "suppressed": True},
         "full": {
             "enabled": active_full,
-            "provider": full.get("provider") or "qwen",
+            "provider": full.get("vendor") or full.get("provider") or "qwen",
             "model": full.get("model") or "qwen-audio-3.1-realtime-flash",
+            "api_key": keys.get("full", ""),
             "api_key_env": full.get("api_key_env") or "DASHSCOPE_API_KEY",
             "voice": full.get("voice") or "qiaoxiaojiao_v3.1",
             "vad_threshold": float(full.get("vad_threshold", 0.5)),
@@ -295,48 +301,54 @@ def resolve(conf: dict) -> dict:
     }
 
 
-def _llm_config(sel: dict) -> dict:
+def _vendor_row(sel: dict, presets: list[dict]) -> dict:
+    vid = sel.get("vendor") or sel.get("provider") or ""
+    return next((p for p in presets if p["id"] == vid), {})
+
+
+def _llm_config(sel: dict, key: str = "") -> dict:
     kind = sel.get("type") or "demo"
-    # 老配置里的 openai/anthropic/gemini 映射到新的接口名
-    kind = _TYPE_ALIASES.get(kind, kind)
-    preset = next((p for p in catalog.LLM_PRESETS if p["id"] == sel.get("preset")), {})
+    kind = _TYPE_ALIASES.get(kind, kind)       # 老配置里的 openai/anthropic/gemini
+    row = _vendor_row(sel, catalog.LLM_PRESETS)
     type_row = catalog.provider("llm_type", kind) or catalog.provider("llm_type", "completions")
-    base = sel.get("base_url") or preset.get("base_url") or type_row.get("default_base", "")
-    model = sel.get("model") or preset.get("model", "")
-    key_env = sel.get("api_key_env") or ("" if kind == "demo" else
-                                         preset.get("api_key_env")
-                                         or _DEFAULT_KEY_ENV.get(kind, "OPENAI_API_KEY"))
-    return {"type": kind, "label": preset.get("label") or type_row.get("label", kind),
-            "base_url": base, "model": model, "api_key_env": key_env,
-            "preset": sel.get("preset") or kind,
-            "models": preset.get("models") or ([model] if model else [])}
+    base = sel.get("base_url") or row.get("base_url") or type_row.get("default_base", "")
+    model = sel.get("model") or row.get("model", "")
+    key_env = row.get("api_key_env") or ("" if kind == "demo"
+                                         else _DEFAULT_KEY_ENV.get(kind, "OPENAI_API_KEY"))
+    return {"type": kind, "vendor": row.get("id") or kind,
+            "label": row.get("label") or type_row.get("label", kind),
+            "base_url": base, "model": model,
+            "api_key": key, "api_key_env": key_env,
+            "models": [m["id"] if isinstance(m, dict) else m
+                       for m in (sel.get("models") or row.get("models")
+                                 or ([model] if model else []))]}
 
 
 _TYPE_ALIASES = {"openai": "completions", "anthropic": "messages", "gemini": "generateContent"}
 _DEFAULT_KEY_ENV = {"messages": "ANTHROPIC_API_KEY", "generateContent": "GEMINI_API_KEY"}
 
 
-def _tts_config(sel: dict) -> dict:
-    pid = sel.get("provider") or "qwen-realtime"
-    p = catalog.provider("tts", pid) or catalog.provider("tts", "qwen-realtime")
-    voices = [i for i, _ in (p.get("voices") or [])]
+def _tts_config(sel: dict, key: str = "") -> dict:
+    row = _vendor_row(sel, catalog.TTS_PROVIDERS)
+    pid = sel.get("vendor") or sel.get("provider") or row.get("id") or "qwen-realtime"
+    voices = [i for i, _ in (row.get("voices") or [])]
     voice = sel.get("voice") or (voices[0] if voices else "")
-    return {"enabled": sel.get("enabled", True) is not False, "provider": p["id"],
-            "label": p.get("label", p["id"]), "voice": voice,
-            "key_env": p.get("key_env", ""),
+    return {"enabled": sel.get("enabled", True) is not False, "provider": pid,
+            "label": row.get("label", pid), "voice": voice,
+            "api_key": key, "key_env": row.get("key_env", ""),
             "base_url": sel.get("base_url") or "",
             "rate": int(sel.get("rate", 0)), "volume": int(sel.get("volume", 100))}
 
 
-def _asr_config(sel: dict) -> dict:
-    pid = sel.get("provider") or "none"
-    p = catalog.provider("asr", pid) or catalog.provider("asr", "none")
-    models = p.get("models") or []
-    return {"provider": p["id"], "label": p.get("label", p["id"]),
+def _asr_config(sel: dict, key: str = "") -> dict:
+    row = _vendor_row(sel, catalog.ASR_PROVIDERS)
+    pid = sel.get("vendor") or sel.get("provider") or row.get("id") or "none"
+    models = row.get("models") or []
+    return {"provider": pid, "label": row.get("label", pid),
             "model": sel.get("model") or (models[0] if models else ""),
-            "key_env": p.get("key_env", ""), "models": models,
+            "api_key": key, "key_env": row.get("key_env", ""), "models": models,
             "base_url": sel.get("base_url") or "",
-            "enabled": p["id"] != "none"}
+            "enabled": pid != "none"}
 
 
 def _agents_config(agents: dict) -> dict:

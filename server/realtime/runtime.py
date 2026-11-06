@@ -449,8 +449,8 @@ class RealtimeRuntime:
 
     @property
     def key(self) -> str:
-        """每次现读环境变量：页面上刚填的 key 不用重启就能用。"""
-        return os.environ.get(self.api_key_env, "")
+        """配置里直接带的 key 优先；没有就读环境变量（老配置）。"""
+        return self.conf.get("api_key") or os.environ.get(self.api_key_env, "")
 
     def info(self) -> dict:
         return {

@@ -92,75 +92,54 @@
 <div id="settings" hidden>
   <div class="cfg-card">
     <header>
+      <button type="button" class="cfg-close" id="cfg-close" title="关闭">×</button>
       <h3>设置</h3>
       <div class="cfg-modebar" id="cfg-modebar">
         <button type="button" data-mode="full">全双工</button>
         <button type="button" data-mode="half">半双工</button>
       </div>
-      <button type="button" class="cfg-close" id="cfg-close" title="关闭">×</button>
     </header>
 
     <nav class="cfg-tabs">
-      <button type="button" data-tab="half">半双工</button>
+      <button type="button" data-tab="half">对话与语音</button>
       <button type="button" data-tab="full">全双工</button>
       <button type="button" data-tab="persona">人设</button>
       <button type="button" data-tab="agents">Agent</button>
-      <button type="button" data-tab="keys">密钥</button>
     </nav>
 
-    <div class="cfg-page" data-page="half" hidden>
+    <div class="cfg-page" data-page="half">
       <p class="cfg-lead" id="cfg-half-lead">LLM 出字 → TTS 念出来 → ASR 收你的话。三件各自独立，可以分别换。</p>
-
-      <h4>LLM（对话）</h4>
-      <label class="cfg-row"><span>接口类型</span><select id="cfg-llm-type"></select></label>
-      <label class="cfg-row"><span>快速预设</span><select id="cfg-llm-preset"></select></label>
-      <label class="cfg-row"><span>Base URL</span><input id="cfg-llm-base" placeholder="https://..."></label>
-      <label class="cfg-row"><span>模型</span><input id="cfg-llm-model" list="cfg-llm-models" placeholder="模型名"></label>
-      <datalist id="cfg-llm-models"></datalist>
-      <label class="cfg-row"><span>Key 变量</span><input id="cfg-llm-keyenv" placeholder="DEEPSEEK_API_KEY"></label>
-      <small id="cfg-llm-note" class="cfg-note"></small>
-
-      <h4>TTS（说话）</h4>
-      <label class="cfg-row"><span>引擎</span><select id="cfg-tts-provider"></select></label>
-      <label class="cfg-row"><span>音色</span><select id="cfg-tts-voice"></select></label>
-      <label class="cfg-row" id="cfg-tts-base-row"><span>Base URL</span><input id="cfg-tts-base" placeholder="https://..."></label>
-      <div class="cfg-actions">
-        <button type="button" class="cfg-test" id="cfg-test">试听这句</button>
-        <small id="cfg-test-note"></small>
-      </div>
-
-      <h4>ASR（听你说话）</h4>
-      <label class="cfg-row"><span>识别</span><select id="cfg-asr-provider"></select></label>
-      <label class="cfg-row" id="cfg-asr-model-row"><span>模型</span><select id="cfg-asr-model"></select></label>
-      <label class="cfg-row" id="cfg-asr-base-row"><span>Base URL</span><input id="cfg-asr-base" placeholder="https://..."></label>
-      <small id="cfg-asr-note" class="cfg-note"></small>
+      <div id="cfg-chan-llm"></div>
+      <div id="cfg-chan-tts"></div>
+      <div id="cfg-chan-asr"></div>
     </div>
 
     <div class="cfg-page" data-page="full" hidden>
-      <p class="cfg-lead" id="cfg-full-lead">音频进、音频出，随时能听、随时打断。目前只有 Qwen 一家。</p>
-      <label class="cfg-row"><span>服务商</span><select id="cfg-full-provider"></select></label>
-      <label class="cfg-row"><span>模型</span><select id="cfg-full-model"></select></label>
-      <label class="cfg-row"><span>音色</span><select id="cfg-full-voice"></select></label>
-      <small id="cfg-full-note" class="cfg-note"></small>
+      <p class="cfg-lead" id="cfg-full-lead">音频进、音频出，随时能听、随时打断。</p>
+      <div id="cfg-chan-full"></div>
     </div>
 
     <div class="cfg-page" data-page="persona" hidden>
-      <p class="cfg-lead">决定她是谁、怎么说话。留空就用内置设定。改完保存即生效，下次对话就按新设定来。</p>
-      <label class="cfg-row"><span>名字</span><input id="cfg-p-name" placeholder="鱼丫丫"></label>
-      <label class="cfg-row"><span>称呼你</span><input id="cfg-p-address" placeholder="你"></label>
-      <h4>她是谁 · 怎么说话</h4>
-      <textarea id="cfg-p-identity" class="cfg-textarea" rows="7"
-                placeholder="留空使用内置人设。可以从这里改起："></textarea>
-      <div class="cfg-actions cfg-actions--left">
-        <button type="button" class="cfg-test" id="cfg-p-default">填入内置人设</button>
-        <button type="button" class="cfg-test" id="cfg-p-clear">清空（用默认）</button>
+      <p class="cfg-lead">决定她是谁、怎么说话。留空就用内置设定，保存后下次对话生效。</p>
+      <div class="cfg-grid">
+        <label><span>名字</span><input id="cfg-p-name" placeholder="鱼丫丫"></label>
+        <label><span>称呼你</span><input id="cfg-p-address" placeholder="你"></label>
+      </div>
+      <label class="cfg-block"><span>她是谁 · 怎么说话</span>
+        <textarea id="cfg-p-identity" class="cfg-textarea" rows="7"
+                  placeholder="留空使用内置人设。"></textarea>
+      </label>
+      <div class="cfg-actions">
+        <button type="button" class="cfg-ghost" id="cfg-p-default">填入内置人设</button>
+        <button type="button" class="cfg-ghost" id="cfg-p-clear">清空（用默认）</button>
         <small id="cfg-p-note"></small>
       </div>
-      <h4>额外要求</h4>
-      <textarea id="cfg-p-extra" class="cfg-textarea" rows="4"
-                placeholder="比如：偶尔用「嘛」结尾；不要主动提自己是 AI。"></textarea>
+      <label class="cfg-block"><span>额外要求</span>
+        <textarea id="cfg-p-extra" class="cfg-textarea" rows="3"
+                  placeholder="比如：偶尔用「嘛」结尾；不要主动提自己是 AI。"></textarea>
+      </label>
       <h4>固定规则（只读）</h4>
-      <p class="cfg-lead">字幕长度、标签用法、记忆标记这些是链路约定，写了才不会被模型说坏。</p>
+      <p class="cfg-lead">字幕长度、标签用法、记忆标记是链路约定，改人设不会动它们。</p>
       <pre id="cfg-p-rules" class="cfg-pre"></pre>
     </div>
 
@@ -171,11 +150,9 @@
         <span>启用后台 agent</span>
         <small id="cfg-agents-state"></small>
       </label>
-
-      <h4>用几个</h4>
-      <div class="cfg-modes cfg-modes--sm" id="cfg-agent-modes"></div>
-      <label class="cfg-row" id="cfg-agent-active-row"><span>指定</span><select id="cfg-agent-active"></select></label>
-
+      <div class="cfg-seg" id="cfg-agent-modes"></div>
+      <label class="cfg-row" id="cfg-agent-active-row"><span>指定</span>
+        <select id="cfg-agent-active"></select></label>
       <h4>可用的命令行</h4>
       <div id="cfg-clis"></div>
       <label class="cfg-switch cfg-switch--sub">
@@ -185,16 +162,10 @@
       </label>
     </div>
 
-    <div class="cfg-page" data-page="keys" hidden>
-      <p class="cfg-lead">只存在本机 <code>state/secrets.json</code>（不入库），保存后立即生效。
-        留空表示不改；要删掉请点「清除」。</p>
-      <div id="cfg-keys"></div>
-    </div>
-
     <footer>
       <small id="cfg-status"></small>
-      <button type="button" id="cfg-refresh" title="重新探测命令行 agent">重新探测</button>
-      <button type="button" id="cfg-save">保存</button>
+      <button type="button" class="cfg-ghost" id="cfg-refresh" title="重新探测命令行 agent">重新探测</button>
+      <button type="button" class="cfg-primary" id="cfg-save">保存</button>
     </footer>
   </div>
 </div>

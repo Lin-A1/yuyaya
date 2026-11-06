@@ -24,16 +24,16 @@ class ASRError(RuntimeError):
 
 
 def transcribe(audio: bytes, provider: str, model: str = "", key_env: str = "",
-               base_url: str = "", timeout: float = 60) -> str:
+               base_url: str = "", timeout: float = 60, api_key: str = "") -> str:
     if provider in ("", "none"):
         raise ASRError("没有启用语音识别")
     if not audio:
         raise ASRError("没收到音频")
     if provider == "openai":
-        return _openai_transcribe(audio, model, key_env, base_url, timeout)
+        return _openai_transcribe(audio, model, key_env, base_url, timeout, api_key)
     if provider != "qwen":
         raise ASRError(f"不支持的语音识别：{provider}")
-    key = os.environ.get(key_env or "DASHSCOPE_API_KEY", "")
+    key = api_key or os.environ.get(key_env or "DASHSCOPE_API_KEY", "")
     if not key:
         raise ASRError(f"需要设置环境变量 {key_env or 'DASHSCOPE_API_KEY'}")
     fmt, data = _normalize(audio)
@@ -61,9 +61,9 @@ def transcribe(audio: bytes, provider: str, model: str = "", key_env: str = "",
 
 
 def _openai_transcribe(audio: bytes, model: str, key_env: str, base_url: str,
-                       timeout: float) -> str:
+                       timeout: float, api_key: str = "") -> str:
     """OpenAI 兼容的 /audio/transcriptions（multipart 上传）。"""
-    key = os.environ.get(key_env or "OPENAI_API_KEY", "")
+    key = api_key or os.environ.get(key_env or "OPENAI_API_KEY", "")
     if not key:
         raise ASRError(f"需要设置环境变量 {key_env or 'OPENAI_API_KEY'}")
     fmt, data = _normalize(audio)

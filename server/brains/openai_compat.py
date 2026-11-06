@@ -18,7 +18,7 @@ class OpenAICompatBrain(Brain):
     def stream(self, prompt: str, history: list[dict], cancel: threading.Event,
                context: str = "") -> Iterator[str]:
         c = self.conf
-        key = os.environ.get(c.get("api_key_env", ""), "") or c.get("api_key", "")
+        key = c.get("api_key") or os.environ.get(c.get("api_key_env", ""), "")
         headers = {"Content-Type": "application/json"}
         if key:
             headers["Authorization"] = f"Bearer {key}"

@@ -157,6 +157,20 @@ LLM_TYPES = [
 ]
 
 # 只是帮页面快速填表的预设，配置里存的是 type + base_url + model + api_key_env
+# ---------------------------------------------------------------- 通道配置
+#
+# 每个通道（LLM / TTS / ASR / 全双工）都是同一套形状，页面上就是
+# 厂商 + Base URL + API Key + 模型列表（可增删、选一个启用）：
+#
+#   {"vendor": "deepseek", "type": "completions", "base_url": "...",
+#    "models": [{"id": "deepseek-chat", "label": "deepseek-chat"}], "model": "deepseek-chat"}
+#
+# key 不写进 config.json，按通道存在 state/secrets.json 里。
+
+def _models(*ids: str) -> list[dict]:
+    return [{"id": i, "label": i} for i in ids]
+
+
 LLM_PRESETS = [
     {"id": "deepseek", "label": "DeepSeek", "type": "completions",
      "base_url": "https://api.deepseek.com", "model": "deepseek-chat",

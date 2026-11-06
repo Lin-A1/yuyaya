@@ -23,7 +23,7 @@ class OpenAITTSProvider(TTSProvider):
 
     @property
     def _key(self) -> str:
-        return os.environ.get(self.conf.get("api_key_env") or "OPENAI_API_KEY", "")
+        return self.conf.get("api_key") or os.environ.get(self.conf.get("api_key_env") or "OPENAI_API_KEY", "")
 
     def synth_wav(self, text: str, voice: str = "", rate: int = 0, volume: int = 100) -> bytes:
         text = (text or "").strip()

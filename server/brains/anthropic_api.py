@@ -20,7 +20,7 @@ class AnthropicBrain(Brain):
         if self._client is None:
             import anthropic  # 延迟导入：不用 Claude 的人不必安装
 
-            key = os.environ.get(self.conf.get("api_key_env", "ANTHROPIC_API_KEY"))
+            key = self.conf.get("api_key") or os.environ.get(self.conf.get("api_key_env", "ANTHROPIC_API_KEY"))
             self._client = anthropic.Anthropic(api_key=key) if key else anthropic.Anthropic()
         return self._client
 

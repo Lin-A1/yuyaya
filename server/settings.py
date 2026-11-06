@@ -1,12 +1,17 @@
-"""页面设置：三层配置的读写。
+"""页面设置：通道化配置的读写。
 
-- **普通选项**（模式、全双工、半双工 LLM/TTS/ASR、每个 CLI 用哪个模型）写回
-  ``config.json``（新结构，``version: 3``）。
-- **key** 只写 ``state/secrets.json``（``state/`` 已 gitignore，永不进仓库），
-  写进去后立刻装进环境变量；``config.json`` 里始终只有 ``api_key_env`` 这种名字。
+四个通道形状一致：**厂商 + API 格式 + Base URL + API Key + 模型列表（选一个）**
 
-规则：环境里已有的 key 不动；页面上填过就以页面为准；空串表示"删掉这个 key"，
-**键不存在表示"不改"**（避免点一次保存就把没碰过的 key 清空）。
+    voice.half.llm / voice.half.tts / voice.half.asr / voice.full
+
+key **不写进 config.json**，按通道存进 ``state/secrets.json``：
+
+```json
+{"llm": "sk-...", "tts": "...", "asr": "...", "full": "..."}
+```
+
+保存时包一层兼容：老版本按环境变量名存的 key（``DASHSCOPE_API_KEY`` 那种）仍然能读到，
+新存的 key 优先。接口只回显掩码，不回传明文。
 """
 from __future__ import annotations
 
@@ -17,6 +22,7 @@ import pathlib
 from . import catalog, persona
 
 SECRETS_NAME = "secrets.json"
+CHANNELS = ("llm", "tts", "asr", "full")
 
 
 def mask(value: str) -> str:
@@ -34,13 +40,24 @@ def _persona_rules() -> str:
     return full[i:] if i >= 0 else full[-600:]
 
 
+def _model_list(raw) -> list[dict]:
+    """模型列表统一成 [{"id","label"}]。"""
+    out = []
+    for m in raw or []:
+        if isinstance(m, str):
+            if m.strip():
+                out.append({"id": m.strip(), "label": m.strip()})
+        elif isinstance(m, dict) and m.get("id"):
+            out.append({"id": str(m["id"]), "label": str(m.get("label") or m["id"])})
+    return out
+
+
 class Settings:
     def __init__(self, conf: dict, config_path: pathlib.Path, state_dir: pathlib.Path) -> None:
         self.conf = conf
         self.config_path = pathlib.Path(config_path)
         self.secrets_path = pathlib.Path(state_dir) / SECRETS_NAME
         self.secrets: dict[str, str] = self._read_secrets()
-        self.apply_secrets()
 
     # ---------------------------------------------------------------- key
     def _read_secrets(self) -> dict[str, str]:
@@ -58,148 +75,130 @@ class Settings:
         except OSError:
             pass
 
-    def apply_secrets(self) -> None:
-        """启动时把本地保存的 key 装进环境变量；外部已经设了的优先。"""
-        for name, value in self.secrets.items():
-            if value and not os.environ.get(name):
-                os.environ[name] = value
+    def key_for(self, channel: str) -> str:
+        """取某个通道的 key：页面存的优先，老的环境变量名兜底。"""
+        val = (self.secrets.get(channel) or "").strip()
+        if val:
+            return val
+        env = self._legacy_env(channel)
+        return (os.environ.get(env, "") if env else "") or ""
 
-    def set_key(self, name: str, value: str) -> None:
+    def _legacy_env(self, channel: str) -> str:
+        """老版本在 config 里记的是 api_key_env；迁移后用它兜底读环境变量。"""
+        voice = self.conf.get("voice") or {}
+        if channel == "full":
+            return (voice.get("full") or {}).get("api_key_env") or "DASHSCOPE_API_KEY"
+        sel = (voice.get("half") or {}).get(channel) or {}
+        if sel.get("api_key_env"):
+            return sel["api_key_env"]
+        preset = next((p for p in catalog.LLM_PRESETS if p["id"] == sel.get("vendor")), {})
+        return preset.get("api_key_env") or ""
+
+    def set_key(self, channel: str, value: str) -> None:
         value = (value or "").strip()
         if value:
-            os.environ[name] = value          # 立即生效
-            self.secrets[name] = value
+            self.secrets[channel] = value
         else:
-            os.environ.pop(name, None)
-            self.secrets.pop(name, None)
-
-    def key_status(self) -> list[dict]:
-        out = []
-        for name, label in catalog.KEY_FIELDS:
-            val = os.environ.get(name, "")
-            out.append({"env": name, "label": label, "set": bool(val),
-                        "hint": mask(val), "saved": bool(self.secrets.get(name))})
-        return out
-
-    def _key_ok(self, env: str, keyless: bool = False) -> bool:
-        if keyless:
-            return True
-        if not env:
-            return True
-        return bool(os.environ.get(env))
+            self.secrets.pop(channel, None)
 
     # ---------------------------------------------------------------- 读
     def snapshot(self, runtime: dict | None = None) -> dict:
-        """设置页要的全量数据。``runtime`` 是 configure.resolve 出来的实际运行状态。"""
-        voice = self.conf.get("voice") or {}
-        full = voice.get("full") or {}
-        half = voice.get("half") or {}
-        llm = half.get("llm") or {}
-        tts = half.get("tts") or {}
-        asr = half.get("asr") or {}
-        agents = self.conf.get("agents") or {}
-        cli_sel = agents.get("cli") or {}
         runtime = runtime or {}
         backends = runtime.get("agents", {}).get("backends") or []
-
-        preset_id = llm.get("preset") or llm.get("type") or "openai"
-        tts_id = tts.get("provider") or "qwen-realtime"
-        asr_id = asr.get("provider") or "none"
+        voice = self.conf.get("voice") or {}
+        half = voice.get("half") or {}
+        agents = self.conf.get("agents") or {}
+        cli_sel = agents.get("cli") or {}
 
         clis = []
         for spec in catalog.CLI_AGENTS:
-            status = catalog.cli_status(spec)
+            st = catalog.cli_status(spec)
             sel = cli_sel.get(spec["id"]) or {}
-            status["model"] = sel["model"] if "model" in sel else ""
-            status["auto_model"] = status.get("default_model") or ""
-            status["enabled"] = sel.get("enabled", True) is not False
-            status["active"] = bool(status["enabled"] and status["installed"]
-                                    and spec["id"] in backends)
-            clis.append(status)
-
-        mode = self.conf.get("mode") or "half"
-        agent_mode = agents.get("mode") or "auto"
+            st["model"] = sel["model"] if "model" in sel else ""
+            st["auto_model"] = st.get("default_model") or ""
+            st["enabled"] = sel.get("enabled", True) is not False
+            st["active"] = bool(st["enabled"] and st["installed"]
+                                and spec["id"] in backends)
+            clis.append(st)
 
         return {
             "version": self.conf.get("version", 3),
-            "mode": mode,                       # full | half，互斥
-            "modes": [
-                {"id": "full", "label": "全双工", "desc": "音频进、音频出，随时插话"},
-                {"id": "half", "label": "半双工", "desc": "打字或说话 → LLM → TTS 念出来"},
-            ],
-            "full": {
-                "providers": [{"id": p["id"], "label": p["label"], "note": p.get("note", ""),
-                               "models": p["models"], "key_env": p["key_env"],
-                               "available": self._key_ok(p["key_env"])}
-                              for p in catalog.FULL_PROVIDERS],
-                "provider": full.get("provider") or "qwen",
-                "model": full.get("model") or "qwen-audio-3.1-realtime-flash",
-                "voice": full.get("voice") or "qiaoxiaojiao_v3.1",
-                "voices": [{"id": i, "label": l} for i, l in catalog.QWEN_VOICES],
-                "key_env": full.get("api_key_env") or "DASHSCOPE_API_KEY",
-                "ready": self._key_ok(full.get("api_key_env") or "DASHSCOPE_API_KEY"),
-            },
-            "llm": {
-                "type": llm.get("type") or "demo",
-                # 免 key 的离线演示也放进类型表，用户能单独选它
-                "types": [{"id": t["id"], "label": t["label"], "note": t.get("note", ""),
-                           "default_base": t.get("default_base", "")} for t in catalog.LLM_TYPES]
-                + [{"id": "demo", "label": "离线演示（不联网）", "note": "台词写死，用来调形象。",
-                    "default_base": ""}],
-                "preset": preset_id,
-                "presets": [{"id": p["id"], "label": p["label"], "type": p["type"],
-                             "base_url": p.get("base_url", ""), "model": p.get("model", ""),
-                             "api_key_env": p.get("api_key_env", ""),
-                             "models": p.get("models") or [], "note": p.get("note", "")}
-                            for p in catalog.LLM_PRESETS],
-                "base_url": llm.get("base_url") or "",
-                "model": llm.get("model") or "",
-                "api_key_env": llm.get("api_key_env") or "",
-                "available": llm.get("type") in ("demo", None) or self._key_ok(
-                    llm.get("api_key_env") or ""),
-            },
-            "tts": {
-                "provider": tts_id,
-                "voice": tts.get("voice") or "",
-                "base_url": tts.get("base_url") or "",
-                "rate": int(tts.get("rate", 0)),
-                "volume": int(tts.get("volume", 100)),
-                "providers": [{"id": p["id"], "label": p["label"], "note": p.get("note", ""),
-                               "key_env": p["key_env"], "base_url_field": bool(p.get("base_url_field")),
-                               "voices": [{"id": i, "label": l} for i, l in p["voices"]],
-                               "available": self._key_ok(p["key_env"], p["id"] in ("edge", "sapi"))}
-                              for p in catalog.TTS_PROVIDERS],
-                "voices": catalog.voices_for(tts_id),
-            },
-            "asr": {
-                "provider": asr_id,
-                "model": asr.get("model") or "",
-                "base_url": asr.get("base_url") or "",
-                "providers": [{"id": p["id"], "label": p["label"], "note": p.get("note", ""),
-                               "key_env": p["key_env"], "models": p["models"],
-                               "base_url_field": bool(p.get("base_url_field")),
-                               "available": self._key_ok(p["key_env"], p["id"] == "none")}
-                              for p in catalog.ASR_PROVIDERS],
-                "enabled": asr_id != "none",
-            },
+            "mode": self.conf.get("mode") or "half",
+            "llm": self._channel("llm", half.get("llm") or {}, catalog.LLM_PRESETS,
+                                 catalog.LLM_TYPES),
+            "tts": self._channel("tts", half.get("tts") or {}, catalog.TTS_PROVIDERS, None),
+            "asr": self._channel("asr", half.get("asr") or {}, catalog.ASR_PROVIDERS, None),
+            "full": self._channel("full", voice.get("full") or {}, catalog.FULL_PROVIDERS, None),
             "agents": {
                 "enabled": bool(agents.get("enabled", True)),
-                "mode": agent_mode,             # auto | manual
+                "mode": agents.get("mode") or "auto",
                 "active": agents.get("active") or "",
                 "max_concurrent": int(agents.get("max_concurrent", 2)),
                 "desktop": bool((agents.get("desktop") or {}).get("enabled", True)),
                 "cli": clis,
                 "backends": backends,
             },
-            "keys": self.key_status(),
             "persona": persona.snapshot(self.conf.get("persona")),
             "persona_rules": _persona_rules(),
             "secrets_path": str(self.secrets_path),
         }
 
+    def _channel(self, name: str, sel: dict, presets: list[dict],
+                 types: list[dict] | None = None) -> dict:
+        """一个通道的展示数据。"""
+        vendor = (sel.get("vendor") or sel.get("provider") or "").strip()
+        row = next((p for p in presets if p["id"] == vendor), {})
+        default_models = _model_list(row.get("models") or sel.get("models") or [])
+        models = _model_list(sel.get("models")) or default_models
+        model = (sel.get("model") or "").strip()
+        if model and model not in {m["id"] for m in models}:
+            models.insert(0, {"id": model, "label": model})
+        if not model and models:
+            model = models[0]["id"]
+        key = self.key_for(name)
+        info = {
+            "vendor": vendor or (presets[0]["id"] if presets else ""),
+            "vendors": [{"id": p["id"], "label": p["label"], "note": p.get("note", ""),
+                         "default_base": p.get("base_url", ""),
+                         "default_models": _model_list(p.get("models") or []),
+                         "key_env": p.get("key_env", "")} for p in presets],
+            "base_url": (sel.get("base_url") or row.get("base_url") or "").strip(),
+            "models": models,
+            "model": model,
+            "has_key": bool(key),
+            "key_hint": mask(key),
+        }
+        if name == "full":
+            info["voices"] = [{"id": i, "label": l} for i, l in catalog.QWEN_VOICES]
+            info["voice"] = sel.get("voice") or "qiaoxiaojiao_v3.1"
+            info["ready"] = bool(self.conf.get("mode") == "full" and bool(key)
+                                 and info["model"])
+        elif name == "tts":
+            info["voices"] = _voices_for(sel, row)
+            info["voice"] = sel.get("voice") or (info["voices"][0]["id"]
+                                                 if info["voices"] else "")
+        if types is not None:
+            info["types"] = [{"id": t["id"], "label": t["label"], "note": t.get("note", ""),
+                              "default_base": t.get("default_base", "")} for t in types]
+            info["type"] = sel.get("type") or row.get("type") or "completions"
+        if name == "asr":
+            info["enabled"] = (sel.get("vendor") or sel.get("provider") or "none") != "none"
+            # 用户选的 none 也要在列表里；vendor 列表本身不含 none
+            info["vendors"] = [{"id": "none", "label": "不启用语音输入",
+                                "note": "只能在控制台打字", "default_base": "",
+                                "default_models": [], "key_env": ""}] + [
+                v for v in info["vendors"] if v["id"] != "none"]
+            if info["vendor"] == "none":
+                info["vendor"] = "none"
+        if name == "llm" and not any(v["id"] == "demo" for v in info["vendors"]):
+            # demo 不在预设列表里，补一项，否则下拉选不到当前值
+            info["vendors"] = info["vendors"] + [
+                {"id": "demo", "label": "离线演示（不联网）", "note": "台词写死，用来调形象。",
+                 "default_base": "", "default_models": [], "key_env": ""}]
+        return info
+
     # ---------------------------------------------------------------- 写
     def save(self) -> None:
-        """把配置写回 config.json（永不含 key 明文）。"""
         data = json.loads(json.dumps(self.conf, ensure_ascii=False))
         try:
             self.config_path.parent.mkdir(parents=True, exist_ok=True)
@@ -209,105 +208,22 @@ class Settings:
             pass
 
     def update(self, body: dict) -> dict:
-        """按页面提交的内容就地更新，返回改动摘要（不含任何 key 明文）。"""
         changed: dict = {}
         voice = self.conf.setdefault("voice", {})
         full = voice.setdefault("full", {})
         half = voice.setdefault("half", {})
 
-        # 模式：全双工 / 半双工二选一
         if body.get("mode") in ("full", "half"):
             self.conf["mode"] = body["mode"]
             changed["mode"] = body["mode"]
 
-        # 全双工
-        f = body.get("full") if isinstance(body.get("full"), dict) else {}
-        if f.get("provider"):
-            pid = str(f["provider"])
-            row = catalog.provider("full", pid)
-            if not row:
-                raise ValueError(f"未知的全双工服务商 {pid!r}")
-            full["provider"] = pid
-            full["api_key_env"] = row.get("key_env", "")
-            if f.get("model"):
-                full["model"] = str(f["model"])
-            elif row.get("models"):
-                full["model"] = row["models"][0]
-            changed["full.provider"] = pid
-        elif f.get("model"):
-            full["model"] = str(f["model"])
-            changed["full.model"] = full["model"]
-        if f.get("voice"):
-            full["voice"] = str(f["voice"])
-            changed["full.voice"] = full["voice"]
-
-        # 半双工 LLM：只存通用四件套
-        llm = body.get("llm") if isinstance(body.get("llm"), dict) else {}
-        cur = half.setdefault("llm", {})
-        if llm.get("preset") and llm.get("preset") != "custom":
-            pid = str(llm["preset"])
-            row = next((p for p in catalog.LLM_PRESETS if p["id"] == pid), None)
-            if row is None:
-                raise ValueError(f"未知的预设 {pid!r}")
-            models = row.get("models") or []
-            # 预设自带模型表就以它为准（没表的如 demo 清空），避免表单里的旧值混进来
-            model = (str(llm.get("model") or "") if models else "") or (
-                row.get("model", "") if models else "")
-            cur.update({"type": row["type"], "base_url": row.get("base_url", ""),
-                        "model": model, "api_key_env": row.get("api_key_env", ""),
-                        "preset": pid})
-            changed["llm.preset"] = pid
-            changed["llm.type"] = row["type"]
-            changed["llm.model"] = cur["model"]
-        else:
-            for key in ("type", "base_url", "model", "api_key_env"):
-                if key in llm:
-                    cur[key] = str(llm[key] or "")
-                    changed[f"llm.{key}"] = cur[key]
-            if llm.get("model") is not None:
-                cur["preset"] = cur.get("preset") or "custom"
-
-        # TTS
-        tts = body.get("tts") if isinstance(body.get("tts"), dict) else {}
-        cts = half.setdefault("tts", {})
-        if tts.get("provider"):
-            pid = str(tts["provider"])
-            row = catalog.provider("tts", pid)
-            if not row:
-                raise ValueError(f"未知的朗读引擎 {pid!r}")
-            cts["provider"] = pid
-            voices = [i for i, _ in row.get("voices") or []]
-            want = str(tts.get("voice") or "")
-            cts["voice"] = want if want in voices else (voices[0] if voices else "")
-            cts["api_key_env"] = row.get("key_env", "")
-            changed["tts.provider"] = pid
-            changed["tts.voice"] = cts["voice"]
-        elif tts.get("voice"):
-            cts["voice"] = str(tts["voice"])
-            changed["tts.voice"] = cts["voice"]
-        if "base_url" in tts:
-            cts["base_url"] = str(tts["base_url"] or "")
-            changed["tts.base_url"] = cts["base_url"]
-
-        # ASR
-        asr = body.get("asr") if isinstance(body.get("asr"), dict) else {}
-        cas = half.setdefault("asr", {})
-        if asr.get("provider"):
-            pid = str(asr["provider"])
-            row = catalog.provider("asr", pid)
-            if not row:
-                raise ValueError(f"未知的语音识别 {pid!r}")
-            cas["provider"] = pid
-            cas["model"] = asr.get("model") or (row.get("models") or [""])[0]
-            cas["api_key_env"] = row.get("key_env", "")
-            changed["asr.provider"] = pid
-            changed["asr.model"] = cas["model"]
-        elif asr.get("model"):
-            cas["model"] = str(asr["model"])
-            changed["asr.model"] = cas["model"]
-        if "base_url" in asr:
-            cas["base_url"] = str(asr["base_url"] or "")
-            changed["asr.base_url"] = cas["base_url"]
+        # 四个通道用同一套更新逻辑
+        for name, key_path in (("llm", half), ("tts", half), ("asr", half), ("full", full)):
+            patch = body.get(name)
+            if not isinstance(patch, dict):
+                continue
+            sel = key_path.setdefault(name, {})
+            self._apply_channel(name, sel, patch, changed)
 
         # agents
         ag = body.get("agents") if isinstance(body.get("agents"), dict) else {}
@@ -325,11 +241,11 @@ class Settings:
             aconf.setdefault("desktop", {})["enabled"] = bool(ag["desktop"])
             changed["agents.desktop"] = bool(ag["desktop"])
         cli = ag.get("cli") if isinstance(ag.get("cli"), dict) else {}
-        sel = aconf.setdefault("cli", {})
+        sel_cli = aconf.setdefault("cli", {})
         for aid, spec in cli.items():
             if aid not in {s["id"] for s in catalog.CLI_AGENTS} or not isinstance(spec, dict):
                 continue
-            row = sel.setdefault(aid, {})
+            row = sel_cli.setdefault(aid, {})
             if "enabled" in spec:
                 row["enabled"] = bool(spec["enabled"])
                 changed[f"agents.cli.{aid}.enabled"] = row["enabled"]
@@ -344,23 +260,60 @@ class Settings:
             for key in ("name", "identity", "address", "extra"):
                 if key in pn:
                     val = str(pn[key] or "").strip()
-                    # 空的 identity/extra 存成空串（= 用内置默认），不留一堆空白
                     cur_p[key] = val
                     changed[f"persona.{key}"] = val[:20]
 
-        # key
-        keys = body.get("keys") if isinstance(body.get("keys"), dict) else {}
-        touched = []
-        for name, value in keys.items():
-            if name not in dict(catalog.KEY_FIELDS):
-                continue
-            self.set_key(name, str(value or ""))
-            touched.append(name if value else f"-{name}")
-        if touched:
-            self.write_secrets()
-            changed["keys"] = touched
-
         self.conf["version"] = 3
-        if any(k != "keys" for k in changed):
+        if any(not k.startswith("_") for k in changed):
             self.save()
         return changed
+
+    def _apply_channel(self, name: str, sel: dict, patch: dict, changed: dict) -> None:
+        """厂商 / 类型 / base_url / 模型列表 / 选中模型 / key。"""
+        presets = {"llm": catalog.LLM_PRESETS, "tts": catalog.TTS_PROVIDERS,
+                   "asr": catalog.ASR_PROVIDERS, "full": catalog.FULL_PROVIDERS}[name]
+        if patch.get("vendor") and patch["vendor"] != sel.get("vendor"):
+            vid = str(patch["vendor"])
+            row = next((p for p in presets if p["id"] == vid), None)
+            if row is None and vid != "none":
+                raise ValueError(f"未知的{name}厂商 {vid!r}")
+            sel["vendor"] = vid
+            sel.pop("provider", None)
+            changed[f"{name}.vendor"] = vid
+            # 换厂商：base_url 和模型表跟着换成新的（除非用户同一请求里另给了值）
+            if "base_url" not in patch and row:
+                sel["base_url"] = row.get("base_url", "")
+            if "models" not in patch and row:
+                sel["models"] = _model_list(row.get("models") or [])
+                sel["model"] = (row.get("model")
+                                or (sel["models"][0]["id"] if sel["models"] else ""))
+            if "type" not in patch and row and row.get("type"):
+                sel["type"] = row["type"]
+            # 换厂商：音色也要换成新厂商的第一个，否则会拿旧厂商的音色名去合成
+            if "voice" not in patch and row and row.get("voices"):
+                sel["voice"] = row["voices"][0][0]
+        for key in ("base_url", "type", "model"):
+            if key in patch:
+                sel[key] = str(patch[key] or "").strip()
+                changed[f"{name}.{key}"] = sel[key][:60]
+        if "models" in patch and isinstance(patch["models"], list):
+            sel["models"] = _model_list(patch["models"])
+            changed[f"{name}.models"] = len(sel["models"])
+            ids = {m["id"] for m in sel["models"]}
+            if sel.get("model") not in ids:
+                sel["model"] = (sel["models"][0]["id"] if sel["models"] else "")
+                changed[f"{name}.model"] = sel["model"]
+        if "voice" in patch:
+            sel["voice"] = str(patch["voice"] or "")
+            changed[f"{name}.voice"] = sel["voice"]
+        if "api_key" in patch:
+            self.set_key(name, str(patch["api_key"] or ""))
+            self.write_secrets()
+            changed[f"{name}.key"] = "已设置" if self.secrets.get(name) else "已清除"
+
+
+def _voices_for(sel: dict, row: dict) -> list[dict]:
+    """TTS 音色表：厂商自带就用它的，否则用当前 base_url 对应的通用表。"""
+    if row.get("voices"):
+        return [{"id": i, "label": l} for i, l in row["voices"]]
+    return []

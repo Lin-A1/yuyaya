@@ -4,32 +4,46 @@
   "history_turns": 12,
   "voice": {
     "full": {
-      "provider": "qwen",
       "model": "qwen-audio-3.1-realtime-flash",
-      "api_key_env": "DASHSCOPE_API_KEY",
       "voice": "qiaoxiaojiao_v3.1",
       "vad_threshold": 0.5,
       "silence_duration_ms": 500,
-      "tools": true
+      "tools": true,
+      "vendor": "qwen",
+      "base_url": "",
+      "models": [
+        {
+          "id": "qwen-audio-3.1-realtime-flash",
+          "label": "qwen-audio-3.1-realtime-flash"
+        }
+      ]
     },
     "half": {
       "llm": {
+        "vendor": "demo",
         "type": "demo",
         "base_url": "",
-        "model": "",
-        "api_key_env": "",
-        "preset": "demo"
+        "models": [],
+        "model": ""
       },
       "tts": {
-        "provider": "qwen-realtime",
-        "voice": "qiaoxiaojiao_v3.1",
+        "vendor": "qwen-realtime",
         "base_url": "",
-        "api_key_env": "",
+        "models": [],
+        "model": "",
+        "voice": "qiaoxiaojiao_v3.1",
         "rate": 0,
         "volume": 100
       },
       "asr": {
-        "provider": "qwen",
+        "vendor": "qwen",
+        "base_url": "",
+        "models": [
+          {
+            "id": "qwen3-asr-flash",
+            "label": "qwen3-asr-flash"
+          }
+        ],
         "model": "qwen3-asr-flash"
       }
     }

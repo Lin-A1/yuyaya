@@ -37,7 +37,7 @@ class QwenRealtimeTTSProvider(TTSProvider):
 
     @property
     def _key(self) -> str:
-        return os.environ.get(self._key_env, "")
+        return self.conf.get("api_key") or os.environ.get(self._key_env, "")
 
     @property
     def _model(self) -> str:

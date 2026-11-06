@@ -1,20 +1,20 @@
-/* 设置面板：模式（全双工/半双工二选一）、半双工三件套、Agent、密钥。
+/* 设置面板：对话与语音（LLM/TTS/ASR）、全双工、人设、Agent。
  *
- * 数据来自 GET /api/settings，保存走 POST /api/settings。普通选项写回 config.json，
- * key 只写 state/secrets.json（不进仓库）；接口只回显掩码，不回传明文。
+ * 每个通道长得一样：厂商 + Base URL + API 格式（LLM 才有）+ API Key + 模型列表。
+ * 数据来自 GET /api/settings，保存走 POST /api/settings；key 只写 state/secrets.json。
  */
 const SettingsPanel = {
   data: null,
   player: null,
-  tab: "mode",
+  tab: "half",
+  chan: {},          // 每个通道的内存编辑态（避免每次重渲染丢输入）
 
   async open() {
     const box = $("#settings");
     if (!box) return;
     box.hidden = false;
     this.setStatus("读取中…");
-    // 等页面初始化完（下拉、播放器都依赖 main() 里的对象）
-    for (let i = 0; i < 40 && typeof SettingsPanel.player !== "object"; i++) {
+    for (let i = 0; i < 40 && typeof this.player !== "object"; i++) {
       await new Promise((r) => setTimeout(r, 250));
     }
     try {
@@ -23,6 +23,7 @@ const SettingsPanel = {
       this.setStatus("读取设置失败：" + e.message);
       return;
     }
+    this.chan = {};      // 重新从服务端数据初始化
     this.render();
     this.setStatus("");
     this.showTab(this.data.mode === "full" ? "full" : "half");
@@ -31,11 +32,7 @@ const SettingsPanel = {
   close() {
     const box = $("#settings");
     if (box) box.hidden = true;
-    document.querySelectorAll(".cfg-key input").forEach((i) => {
-      i.value = "";
-      i.dataset.touched = "0";
-      i.dataset.clear = "0";
-    });
+    this.chan = {};
   },
 
   setStatus(text) {
@@ -53,15 +50,176 @@ const SettingsPanel = {
     });
   },
 
+  // ------------------------------------------------------------ 通道
+  edit(name) {
+    if (!this.chan[name]) this.chan[name] = JSON.parse(JSON.stringify(this.data[name] || {}));
+    return this.chan[name];
+  },
+
+  /** 一个通道的编辑区：厂商 / Base URL / API 格式 / Key / 模型列表 */
+  renderChannel(name, mount, title, hint) {
+    const c = this.edit(name);
+    const vendors = c.vendors || [];
+    const models = c.models || [];
+    const typeRow = (c.types || []).find((t) => t.id === c.type) || {};
+    const isDemo = c.type === "demo" || c.vendor === "demo";
+    const keyed = c.keyed !== false;
+
+    mount.innerHTML = `
+      <section class="cfg-chan" data-chan="${name}">
+        <h4>${title}${hint ? `<small>${hint}</small>` : ""}</h4>
+        <label class="cfg-field"><span>厂商</span>
+          <select class="c-vendor">${vendors.map((v) =>
+            `<option value="${v.id}"${v.id === c.vendor ? " selected" : ""}>${v.label}</option>`).join("")}
+          </select>
+        </label>
+        ${c.types ? `<label class="cfg-field"><span>API 格式</span>
+          <select class="c-type">${c.types.map((t) =>
+            `<option value="${t.id}"${t.id === c.type ? " selected" : ""}>${t.label}</option>`).join("")}
+          </select></label>` : ""}
+        <label class="cfg-field c-base" ${isDemo ? "hidden" : ""}><span>Base URL</span>
+          <input class="c-base-input" value="${esc(c.base_url || "")}" placeholder="https://…/v1">
+        </label>
+        ${keyed ? `<label class="cfg-field c-key" ${isDemo ? "hidden" : ""}><span>API Key</span>
+          <input class="c-key-input" type="password" autocomplete="off" spellcheck="false"
+                 placeholder="${c.has_key ? "已设置 " + c.key_hint + "，留空不改" : "未设置"}">
+        </label>` : ""}
+        <div class="cfg-field cfg-field--top c-models" ${isDemo ? "hidden" : ""}>
+          <span>模型列表</span>
+          <div class="c-model-list">
+            ${models.map((m) => this.modelRow(m, c.model)).join("")
+              || '<div class="c-model-empty">还没有模型，点右上角添加</div>'}
+          </div>
+          <div class="c-model-add">
+            <input class="c-new-model" placeholder="输入模型名，回车添加">
+            <button type="button" class="cfg-ghost c-add">+ 添加</button>
+          </div>
+        </div>
+        ${c.voices ? `<label class="cfg-field"><span>音色</span>
+          <select class="c-voice">${c.voices.map((v) =>
+            `<option value="${v.id}"${v.id === c.voice ? " selected" : ""}>${v.label}</option>`).join("")}
+          </select></label>` : ""}
+        <small class="cfg-policy">${typeRow.note || (c.vendors || []).find(
+          (v) => v.id === c.vendor)?.note || ""}</small>
+      </section>`;
+
+    // 厂商：换厂商时把 base / 模型表换成该厂商的默认
+    this.on(mount, ".c-vendor", "change", (el) => {
+      const v = vendors.find((x) => x.id === el.value) || {};
+      c.vendor = el.value;
+      if (!c.keep_base) c.base_url = v.default_base || "";
+      if (v.default_models && v.default_models.length) {
+        c.models = v.default_models.slice();
+        c.model = c.models[0].id;
+      }
+      if (c.types && v.id === "demo") c.type = "demo";
+      this.renderChannel(name, mount, title, hint);
+    });
+    // API 格式
+    this.on(mount, ".c-type", "change", (el) => {
+      c.type = el.value;
+      const t = (c.types || []).find((x) => x.id === el.value) || {};
+      if (!c.base_url && t.default_base) c.base_url = t.default_base;
+      this.renderChannel(name, mount, title, hint);
+    });
+    this.on(mount, ".c-base-input", "input", (el) => { c.base_url = el.value.trim(); });
+    this.on(mount, ".c-key-input", "input", (el) => {
+      c._keyTouched = true;
+      c._key = el.value;
+    });
+    this.on(mount, ".c-voice", "change", (el) => { c.voice = el.value; });
+
+    // 模型：选中 / 改名 / 删除 / 添加
+    mount.querySelectorAll(".c-model").forEach((row) => {
+      const id = row.dataset.id;
+      const pick = row.querySelector('input[type="radio"]');
+      pick.addEventListener("change", () => {
+        c.model = id;
+        mount.querySelectorAll(".c-model").forEach((r) =>
+          r.classList.toggle("on", r.dataset.id === id));
+      });
+      const rename = row.querySelector(".c-edit");
+      rename.addEventListener("click", () => {
+        const m = c.models.find((x) => x.id === id);
+        const val = prompt("模型名", m.id);
+        if (!val) return;
+        m.id = val.trim();
+        m.label = val.trim();
+        if (c.model === id) c.model = m.id;
+        this.renderChannel(name, mount, title, hint);
+      });
+      row.querySelector(".c-del").addEventListener("click", () => {
+        if (c.models.length <= 1) { this.setStatus("至少留一个模型"); return; }
+        c.models = c.models.filter((x) => x.id !== id);
+        if (c.model === id) c.model = c.models[0].id;
+        this.renderChannel(name, mount, title, hint);
+      });
+    });
+    const add = () => {
+      const input = mount.querySelector(".c-new-model");
+      const val = (input.value || "").trim();
+      if (!val) return;
+      if (c.models.some((m) => m.id === val)) { this.setStatus("已经有这个模型了"); return; }
+      c.models.push({ id: val, label: val });
+      c.model = c.model || val;
+      input.value = "";
+      this.renderChannel(name, mount, title, hint);
+    };
+    mount.querySelector(".c-add").addEventListener("click", add);
+    mount.querySelector(".c-new-model").addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") { ev.preventDefault(); add(); }
+    });
+  },
+
+  modelRow(m, current) {
+    const on = m.id === current;
+    return `
+      <div class="c-model ${on ? "on" : ""}" data-id="${esc(m.id)}">
+        <input type="radio" name="cfg-model-pick" ${on ? "checked" : ""}>
+        <span class="c-model-name">${esc(m.label || m.id)}</span>
+        <button type="button" class="c-edit" title="改名">✎</button>
+        <button type="button" class="c-del" title="删除">🗑</button>
+      </div>`;
+  },
+
+  on(mount, sel, evt, fn) {
+    const el = mount.querySelector(sel);
+    if (el) el.addEventListener(evt, () => fn(el));
+  },
+
   // ------------------------------------------------------------ 渲染
   render() {
     if (!this.data) return;
     this.renderMode();
-    this.renderHalf();
-    this.renderFull();
+    this.renderChannel("llm", $("#cfg-chan-llm"), "LLM（对话）",
+                       "决定她说什么、怎么想");
+    this.renderChannel("tts", $("#cfg-chan-tts"), "TTS（说话）", "把回复念出来");
+    this.renderChannel("asr", $("#cfg-chan-asr"), "ASR（听你说话）", "麦克风转文字");
+    this.renderChannel("full", $("#cfg-chan-full"), "全双工语音", "音频级实时对话");
     this.renderPersona();
     this.renderAgents();
-    this.renderKeys();
+  },
+
+  renderMode() {
+    const mode = this.data.mode || "half";
+    document.querySelectorAll("#cfg-modebar button").forEach((b) => {
+      b.classList.toggle("on", b.dataset.mode === mode);
+    });
+    const onFull = mode === "full";
+    const lead = $("#cfg-half-lead");
+    if (lead) {
+      lead.textContent = onFull
+        ? "⚠ 当前是「全双工」模式，这里的 LLM / TTS / ASR 不会生效。点顶部「半双工」切换。"
+        : "LLM 出字 → TTS 念出来 → ASR 收你的话。三件各自独立，可以分别换。";
+      lead.classList.toggle("cfg-lead--warn", onFull);
+    }
+    const flead = $("#cfg-full-lead");
+    if (flead) {
+      flead.textContent = onFull
+        ? "音频进、音频出，随时能听、随时打断。"
+        : "⚠ 当前是「半双工」模式，全双工不会生效。点顶部「全双工」切换。";
+      flead.classList.toggle("cfg-lead--warn", !onFull);
+    }
   },
 
   renderPersona() {
@@ -74,104 +232,6 @@ const SettingsPanel = {
     $("#cfg-p-rules").textContent = this.data.persona_rules || "";
   },
 
-  /** 单选卡片（模式 / agent 用几个） */
-  renderChoices(box, items, value, onPick) {
-    box.innerHTML = (items || []).map((m) => `
-      <label class="cfg-choice ${m.id === value ? "on" : ""}" data-id="${m.id}">
-        <input type="radio" name="${box.id}" value="${m.id}" ${m.id === value ? "checked" : ""}>
-        <b>${m.label}</b>
-        <small>${m.desc || ""}</small>
-      </label>`).join("");
-    box.querySelectorAll("input").forEach((i) => {
-      i.addEventListener("change", () => {
-        box.querySelectorAll(".cfg-choice").forEach((c) => {
-          c.classList.toggle("on", c.dataset.id === i.value);
-        });
-        onPick(i.value);
-      });
-    });
-  },
-
-  renderMode() {
-    const d = this.data || {};
-    const bar = $("#cfg-modebar");
-    if (!bar) return;
-    bar.querySelectorAll("button").forEach((b) => {
-      b.classList.toggle("on", b.dataset.mode === d.mode);
-    });
-    // 非当前模式的页面明确标出来（免得以为改了就生效）
-    const onFull = d.mode === "full";
-    $("#cfg-half-lead").textContent = onFull
-      ? "⚠ 当前是「全双工」模式，这一页的 LLM / ASR 不会生效；点顶部「半双工」切换过去才会用。"
-      : "LLM 出字 → TTS 念出来 → ASR 收你的话。三件各自独立，可以分别换。";
-    $("#cfg-half-lead").classList.toggle("cfg-lead--warn", onFull);
-    $("#cfg-full-lead").textContent = onFull
-      ? "音频进、音频出，随时能听、随时打断。目前只有 Qwen 一家。"
-      : "⚠ 当前是「半双工」模式，全双工不会生效；点顶部「全双工」切换过去才会用。";
-    $("#cfg-full-lead").classList.toggle("cfg-lead--warn", !onFull);
-  },
-
-  renderHalf() {
-    const d = this.data;
-    const llm = d.llm || {}, tts = d.tts || {}, asr = d.asr || {};
-
-    // LLM：接口类型 / 预设 / base / model / key 变量
-    this.fillSelect($("#cfg-llm-type"), llm.types, llm.type);
-    this.fillSelect($("#cfg-llm-preset"),
-      (llm.presets || []).map((p) => ({ id: p.id, label: `${p.label} · ${p.type}` })),
-      llm.preset);
-    const typeRow = (llm.types || []).find((t) => t.id === llm.type) || {};
-    const needsBase = !!(typeRow.default_base || llm.type === "completions"
-                        || llm.type === "responses");
-    $("#cfg-llm-base").value = llm.base_url || "";
-    $("#cfg-llm-base").closest(".cfg-row").hidden = !needsBase;
-    $("#cfg-llm-model").value = llm.model || "";
-    $("#cfg-llm-model").closest(".cfg-row").hidden = llm.type === "demo";
-    $("#cfg-llm-keyenv").value = llm.api_key_env || "";
-    $("#cfg-llm-keyenv").closest(".cfg-row").hidden = llm.type === "demo";
-    const preset = (llm.presets || []).find((p) => p.id === llm.preset) || {};
-    $("#cfg-llm-models").innerHTML = (preset.models || [])
-      .map((m) => `<option value="${m}">`).join("");
-    $("#cfg-llm-note").textContent = [preset.note || "",
-      llm.type === "demo" ? "" : (llm.available ? "" : "缺少对应 key")].filter(Boolean).join(" · ");
-
-    // TTS
-    this.fillSelect($("#cfg-tts-provider"),
-      (tts.providers || []).map((x) => ({ id: x.id, label: x.label + (x.available ? "" : "（缺 key）") })),
-      tts.provider);
-    const tp = (tts.providers || []).find((x) => x.id === tts.provider) || {};
-    this.fillSelect($("#cfg-tts-voice"), tp.voices || tts.voices, tts.voice);
-    $("#cfg-tts-base-row").hidden = !tp.base_url_field;
-    $("#cfg-tts-base").value = tts.base_url || "";
-
-    // ASR
-    this.fillSelect($("#cfg-asr-provider"),
-      (asr.providers || []).map((x) => ({ id: x.id, label: x.label + (x.available ? "" : "（缺 key）") })),
-      asr.provider);
-    const ap = (asr.providers || []).find((x) => x.id === asr.provider) || {};
-    const models = ap.models || [];
-    $("#cfg-asr-model-row").hidden = models.length === 0;
-    this.fillSelect($("#cfg-asr-model"), models, asr.model);
-    $("#cfg-asr-base-row").hidden = !ap.base_url_field;
-    $("#cfg-asr-base").value = asr.base_url || "";
-    $("#cfg-asr-note").textContent = asr.provider === "none"
-      ? "麦克风按钮会被禁用，只能在控制台打字。" : (ap.note || "");
-  },
-
-  renderFull() {
-    const f = this.data.full || {};
-    const p = (f.providers || []).find((x) => x.id === f.provider) || {};
-    this.fillSelect($("#cfg-full-provider"),
-      (f.providers || []).map((x) => ({ id: x.id, label: x.label + (x.available ? "" : "（缺 key）") })),
-      f.provider);
-    this.fillSelect($("#cfg-full-model"), (p.models || [f.model]), f.model);
-    this.fillSelect($("#cfg-full-voice"), f.voices, f.voice);
-    $("#cfg-full-note").textContent = [
-      p.note || "", `需要 ${f.key_env}`,
-      f.ready ? "" : "（还没填，去「密钥」页填）",
-    ].filter(Boolean).join(" · ");
-  },
-
   renderAgents() {
     const a = this.data.agents || {};
     $("#cfg-agents-on").checked = !!a.enabled;
@@ -180,139 +240,69 @@ const SettingsPanel = {
     const usable = clis.filter((c) => c.installed && c.enabled);
     $("#cfg-agents-state").textContent = a.enabled ? `${usable.length} 个可用` : "已停用";
 
-    // auto = 按任务类型挑；manual = 只用指定的一个
-    this.renderChoices($("#cfg-agent-modes"), [
-      { id: "auto", label: "自动", desc: "按任务类型挑一个后端" },
-      { id: "manual", label: "只用一个", desc: "所有任务都用指定的 CLI" },
-    ], a.mode || "auto", (v) => {
-      this.data.agents.mode = v;
-      $("#cfg-agent-active-row").hidden = v !== "manual";
+    $("#cfg-agent-modes").innerHTML = [
+      { id: "auto", label: "自动", desc: "按任务类型挑一个" },
+      { id: "manual", label: "只用一个", desc: "全用指定的 CLI" },
+    ].map((m) => `
+      <label class="cfg-seg-item ${(a.mode || "auto") === m.id ? "on" : ""}" data-id="${m.id}">
+        <input type="radio" name="agent-mode" value="${m.id}" ${(a.mode || "auto") === m.id ? "checked" : ""}>
+        <b>${m.label}</b><small>${m.desc}</small>
+      </label>`).join("");
+    $("#cfg-agent-modes").querySelectorAll("input").forEach((i) => {
+      i.addEventListener("change", () => {
+        this.data.agents.mode = i.value;
+        $("#cfg-agent-modes").querySelectorAll(".cfg-seg-item").forEach((x) =>
+          x.classList.toggle("on", x.dataset.id === i.value));
+        $("#cfg-agent-active-row").hidden = i.value !== "manual";
+      });
     });
     this.fillSelect($("#cfg-agent-active"),
-      usable.map((c) => ({ id: c.id, label: c.label })), a.active || (usable[0] || {}).id || "");
+      usable.map((c) => ({ id: c.id, label: c.label })),
+      a.active || (usable[0] || {}).id || "");
     $("#cfg-agent-active-row").hidden = (a.mode || "auto") !== "manual";
 
     $("#cfg-clis").innerHTML = clis.map((c) => {
       const models = c.models || [];
-      const auto = `<option value=""${c.model ? "" : " selected"}>用 CLI 自己的默认${
-        c.auto_model ? "（" + c.auto_model + "）" : ""}</option>`;
-      const opts = auto + models.map((m) => {
-        const id = m.id ?? m, label = m.label ?? m;
-        return `<option value="${id}"${id === c.model ? " selected" : ""}>${label}</option>`;
-      }).join("");
-      const meta = c.installed
-        ? `${c.version || "已安装"} · ${models.length} 个模型`
-        : (c.reason || "未安装");
+      const opts = `<option value=""${c.model ? "" : " selected"}>用 CLI 自己的默认${
+        c.auto_model ? "（" + c.auto_model + "）" : ""}</option>`
+        + models.map((m) => `<option value="${m.id}"${m.id === c.model ? " selected" : ""}>${
+          m.label || m.id}</option>`).join("");
+      const meta = c.installed ? `${c.version || "已安装"} · ${models.length} 个模型`
+                               : (c.reason || "未安装");
       return `
       <div class="cfg-cli ${c.installed ? "" : "off"}" data-id="${c.id}">
         <label class="cfg-switch">
           <input type="checkbox" class="cli-on" ${c.enabled ? "checked" : ""}
                  ${c.installed ? "" : "disabled"}>
-          <span>${c.label}</span>
-          <small>${meta}</small>
+          <span>${c.label}</span><small>${meta}</small>
         </label>
-        <label class="cfg-row cfg-row--sub">
-          <span>模型</span>
-          <select class="cli-model" ${models.length ? "" : "disabled"}>${opts}</select>
-        </label>
-        ${c.note ? `<small class="cfg-note">${c.note}</small>` : ""}
+        <label class="cfg-field cfg-field--sub"><span>模型</span>
+          <select class="cli-model" ${models.length ? "" : "disabled"}>${opts}</select></label>
+        ${c.note ? `<small class="cfg-policy">${c.note}</small>` : ""}
       </div>`;
     }).join("");
   },
 
-  renderKeys() {
-    const keys = this.data.keys || [];
-    $("#cfg-keys").innerHTML = keys.map((k) => `
-      <div class="cfg-key ${k.set ? "ok" : ""}" data-env="${k.env}">
-        <i></i>
-        <label><b>${k.env}</b><small>${k.label}${k.set ? " · 已设置 " + k.hint : ""}</small></label>
-        <input type="password" autocomplete="off" spellcheck="false"
-               placeholder="${k.set ? "已设置，留空不改" : "未设置"}" data-env="${k.env}">
-        ${k.set ? '<button type="button" class="cfg-clear" title="删掉这个 key">清除</button>' : ""}
-      </div>`).join("");
-    $("#cfg-keys").querySelectorAll("input").forEach((i) => {
-      i.addEventListener("input", () => { i.dataset.touched = "1"; i.dataset.clear = "0"; });
-    });
-    $("#cfg-keys").querySelectorAll(".cfg-clear").forEach((b) => {
-      b.addEventListener("click", () => {
-        const wrap = b.closest(".cfg-key");
-        const input = wrap.querySelector("input");
-        input.value = "";
-        input.dataset.touched = "1";
-        input.dataset.clear = "1";
-        wrap.classList.remove("ok");
-        b.remove();
-        this.setStatus("保存后清除 " + wrap.dataset.env);
-      });
-    });
-  },
-
   fillSelect(sel, items, value) {
     const list = items || [];
-    if (!list.length) {
-      sel.innerHTML = '<option value="">（不需要选）</option>';
-      sel.value = "";
-      return;
-    }
-    const has = list.some((i) => (i.id ?? i) === value);
-    sel.innerHTML = list
-      .map((i) => `<option value="${i.id ?? i}">${i.label ?? i}</option>`)
-      .join("") + (value && !has ? `<option value="${value}">${value}（当前）</option>` : "");
-    sel.value = value ?? (list[0] && (list[0].id ?? list[0])) ?? "";
-  },
-
-  // ------------------------------------------------------------ 联动
-  onLLMType() {
-    const llm = this.data.llm || {};
-    const type = $("#cfg-llm-type").value;
-    const row = (llm.types || []).find((t) => t.id === type) || {};
-    const demo = type === "demo";
-    const needsBase = !demo && !!(row.default_base || type === "completions" || type === "responses");
-    $("#cfg-llm-base").closest(".cfg-row").hidden = !needsBase;
-    $("#cfg-llm-model").closest(".cfg-row").hidden = demo;
-    $("#cfg-llm-keyenv").closest(".cfg-row").hidden = demo;
-    if (!$("#cfg-llm-base").value && needsBase) $("#cfg-llm-base").value = row.default_base || "";
-    $("#cfg-llm-note").textContent = row.note || "";
-  },
-
-  /** 选预设：把 base_url / model / key 变量一次性填好，用户还能再改 */
-  onLLMPreset() {
-    const llm = this.data.llm || {};
-    const p = (llm.presets || []).find((x) => x.id === $("#cfg-llm-preset").value) || {};
-    if (p.type) $("#cfg-llm-type").value = p.type;
-    this.onLLMType();
-    $("#cfg-llm-base").value = p.base_url || "";
-    // demo 这类没有模型表的预设，模型字段要清空，别留着上一个预设的值
-    $("#cfg-llm-model").value = (p.models || []).length ? (p.model || "") : "";
-    $("#cfg-llm-keyenv").value = p.api_key_env || "";
-    $("#cfg-llm-models").innerHTML = (p.models || []).map((m) => `<option value="${m}">`).join("");
-    $("#cfg-llm-note").textContent = p.note || (p.type === "demo" ? "不联网、不用 key，台词写死。" : "");
-  },
-
-  onTTSProvider() {
-    const tts = this.data.tts || {};
-    const p = (tts.providers || []).find((x) => x.id === $("#cfg-tts-provider").value) || {};
-    this.fillSelect($("#cfg-tts-voice"), p.voices || [], ((p.voices || [])[0] || {}).id || "");
-    $("#cfg-tts-base-row").hidden = !p.base_url_field;
-  },
-
-  onASRProvider() {
-    const asr = this.data.asr || {};
-    const p = (asr.providers || []).find((x) => x.id === $("#cfg-asr-provider").value) || {};
-    const models = p.models || [];
-    $("#cfg-asr-model-row").hidden = models.length === 0;
-    this.fillSelect($("#cfg-asr-model"), models, models[0] || "");
-    $("#cfg-asr-base-row").hidden = !p.base_url_field;
-    $("#cfg-asr-note").textContent = $("#cfg-asr-provider").value === "none"
-      ? "麦克风按钮会被禁用，只能在控制台打字。" : (p.note || "");
+    if (!list.length) { sel.innerHTML = '<option value="">（不需要选）</option>'; return; }
+    const has = list.some((i) => i.id === value);
+    sel.innerHTML = list.map((i) => `<option value="${i.id}">${i.label}</option>`).join("")
+      + (value && !has ? `<option value="${value}">${value}</option>` : "");
+    sel.value = value || list[0].id;
   },
 
   // ------------------------------------------------------------ 保存
   collect() {
-    const keys = {};
-    document.querySelectorAll(".cfg-key input").forEach((i) => {
-      if (i.dataset.touched === "1" || i.dataset.clear === "1") keys[i.dataset.env] = i.value;
-    });
+    const out = { mode: this.data.mode };
+    for (const [name, c] of Object.entries(this.chan)) {
+      const patch = { vendor: c.vendor, base_url: c.base_url, model: c.model,
+                      models: c.models || [] };
+      if (c.types) patch.type = c.type;
+      if (c.voice) patch.voice = c.voice;
+      if (c._keyTouched) patch.api_key = c._key || "";
+      out[name] = patch;
+    }
     const cli = {};
     document.querySelectorAll(".cfg-cli").forEach((row) => {
       cli[row.dataset.id] = {
@@ -320,50 +310,20 @@ const SettingsPanel = {
         model: (row.querySelector(".cli-model") || {}).value || "",
       };
     });
-    const mode = this.data.mode || "half";     // 顶部切换条选的
-    const agentMode = (document.querySelector('#cfg-agent-modes input:checked') || {}).value || "auto";
-    const presetId = $("#cfg-llm-preset").value;
-    const p = (this.data.llm.presets || []).find((x) => x.id === presetId) || {};
-    // 用户改过预设里的任何一个字段 → 当作自定义，别让预设把值盖回去
-    const edited = ($("#cfg-llm-base").value || "") !== (p.base_url || "")
-      || $("#cfg-llm-keyenv").value !== (p.api_key_env || "")
-      || ((p.models || []).length && $("#cfg-llm-model").value !== (p.model || ""));
-    const llm = edited
-      ? { preset: "custom", type: $("#cfg-llm-type").value,
-          base_url: $("#cfg-llm-base").value, model: $("#cfg-llm-model").value,
-          api_key_env: $("#cfg-llm-keyenv").value }
-      : { preset: presetId, type: $("#cfg-llm-type").value,
-          base_url: $("#cfg-llm-base").value, model: $("#cfg-llm-model").value,
-          api_key_env: $("#cfg-llm-keyenv").value };
-    const ttsProvider = (this.data.tts.providers || []).find((p) => p.id === $("#cfg-tts-provider").value) || {};
-    const asrProvider = (this.data.asr.providers || []).find((p) => p.id === $("#cfg-asr-provider").value) || {};
-    return {
-      mode,
-      full: {
-        provider: $("#cfg-full-provider").value,
-        model: $("#cfg-full-model").value,
-        voice: $("#cfg-full-voice").value,
-      },
-      llm,
-      tts: { provider: $("#cfg-tts-provider").value, voice: $("#cfg-tts-voice").value,
-             base_url: ttsProvider.base_url_field ? $("#cfg-tts-base").value : "" },
-      asr: { provider: $("#cfg-asr-provider").value, model: $("#cfg-asr-model").value,
-             base_url: asrProvider.base_url_field ? $("#cfg-asr-base").value : "" },
-      agents: {
-        enabled: $("#cfg-agents-on").checked,
-        mode: agentMode,
-        active: $("#cfg-agent-active").value,
-        desktop: $("#cfg-desktop-on").checked,
-        cli,
-      },
-      persona: {
-        name: $("#cfg-p-name").value,
-        address: $("#cfg-p-address").value,
-        identity: $("#cfg-p-identity").value,
-        extra: $("#cfg-p-extra").value,
-      },
-      keys,
+    out.agents = {
+      enabled: $("#cfg-agents-on").checked,
+      mode: (document.querySelector('#cfg-agent-modes input:checked') || {}).value || "auto",
+      active: $("#cfg-agent-active").value,
+      desktop: $("#cfg-desktop-on").checked,
+      cli,
     };
+    out.persona = {
+      name: $("#cfg-p-name").value,
+      address: $("#cfg-p-address").value,
+      identity: $("#cfg-p-identity").value,
+      extra: $("#cfg-p-extra").value,
+    };
+    return out;
   },
 
   async save() {
@@ -373,18 +333,15 @@ const SettingsPanel = {
     try {
       const body = this.collect();
       this.data = await api("/api/settings", body);
+      this.chan = {};
       this.render();
-      if (body.tts) this.applyVoice();
+      this.applyVoice();
       const changed = this.data.changed || {};
-      const parts = Object.entries(changed)
-        .filter(([k]) => k !== "keys")
+      const parts = Object.entries(changed).slice(0, 4)
         .map(([k, v]) => `${k}=${v === true ? "开" : v === false ? "关" : v}`);
-      if (changed.keys) parts.push("key：" + changed.keys.join(", "));
-      const applied = this.data.applied || [];
-      this.setStatus(parts.length
-        ? "已保存 · " + parts.slice(0, 4).join(" · ") + (parts.length > 4 ? ` 等 ${parts.length} 项` : "")
-        : "已保存（无改动）");
-      if (applied.length) console.info("[settings] 已生效:", applied);
+      this.setStatus(parts.length ? "已保存 · " + parts.join(" · ")
+                                 + (Object.keys(changed).length > 4 ? " 等" : "")
+                                 : "已保存（无改动）");
       this.broadcast();
     } catch (e) {
       this.setStatus("保存失败：" + e.message);
@@ -399,6 +356,7 @@ const SettingsPanel = {
     this.setStatus("重新探测命令行 agent…");
     try {
       this.data = await fetch("/api/settings?refresh=1").then((r) => r.json());
+      this.chan = {};
       this.render();
       const n = (this.data.agents?.cli || []).filter((c) => c.installed).length;
       this.setStatus(`探测完成 · ${n} 个 agent 可用`);
@@ -409,69 +367,36 @@ const SettingsPanel = {
     }
   },
 
-  /** 换了朗读音色/引擎：当前页面的朗读器立刻改用新设置，不用刷新 */
   applyVoice() {
     const voice = this.player?.base?.voice || window.__voice;
     if (!voice || !voice.conf) return;
-    voice.conf.voice = $("#cfg-tts-voice").value;
-    voice.conf.provider = $("#cfg-tts-provider").value;
+    const c = this.data.tts || {};
+    if (c.voice) voice.conf.voice = c.voice;
+    if (c.vendor) voice.conf.provider = c.vendor;
   },
 
-  /** 保存后刷新页面上的能力状态（麦克风按钮、模式提示） */
   broadcast() {
     const d = this.data || {};
     const btn = $("#mic-btn");
-    const mode = d.mode;
-    const asrOn = mode === "half" && d.asr?.enabled;
-    if (btn) {
-      if (mode === "full") {
-        btn.disabled = false;
-        btn.title = "全双工语音（点一下连实时模型）";
-      } else if (asrOn) {
-        btn.disabled = false;
-        btn.title = "语音输入";
-      } else {
-        btn.disabled = true;
-        btn.textContent = "语音";
-        btn.title = "半双工没启用语音识别，去「设置 → 半双工」选一个，或直接打字";
-      }
-    }
-    // 模式变了要刷新页面才彻底切换（语音按钮的处理器是启动时绑的）
-    if (d.applied && d.applied.some((a) => a.startsWith("mode="))) {
-      this.setStatus((document.querySelector("#cfg-status").textContent || "") + " · 刷新页面后完全切换");
-    }
-  },
-
-  /** 用当前页面上选的音色试听一句（不用先保存） */
-  async test() {
-    const note = $("#cfg-test-note");
-    note.textContent = "合成中…";
-    try {
-      const text = "你好呀，我是鱼丫丫，今天也一起玩吧。";
-      const res = await fetch("/api/tts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, voice: $("#cfg-tts-voice").value,
-                               provider: $("#cfg-tts-provider").value }),
-      });
-      if (!res.ok) {
-        let detail = "";
-        try { detail = (await res.json()).detail || ""; } catch (_) {}
-        throw new Error(`HTTP ${res.status}${detail ? " · " + detail : ""}`);
-      }
-      const ctx = new (window.AudioContext || window.webkitAudioContext)();
-      const buf = await ctx.decodeAudioData(await res.arrayBuffer());
-      const src = ctx.createBufferSource();
-      src.buffer = buf;
-      src.connect(ctx.destination);
-      src.onended = () => ctx.close();
-      src.start();
-      note.textContent = `“${text}”`;
-    } catch (e) {
-      note.textContent = "试听失败：" + e.message;
+    if (!btn) return;
+    if (d.mode === "full") {
+      btn.disabled = false;
+      btn.title = "全双工语音（点一下连实时模型）";
+    } else if (d.asr?.enabled) {
+      btn.disabled = false;
+      btn.title = "语音输入";
+    } else {
+      btn.disabled = true;
+      btn.textContent = "语音";
+      btn.title = "半双工没启用语音识别，去「设置 → 对话与语音」选一个，或直接打字";
     }
   },
 };
+
+function esc(s) {
+  return String(s ?? "").replace(/[&<>"']/g, (c) => (
+    { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
 
 function setupSettings() {
   const btn = $("#cfg-btn");
@@ -483,32 +408,22 @@ function setupSettings() {
   document.addEventListener("keydown", (ev) => {
     if (ev.key === "Escape" && !box.hidden) {
       SettingsPanel.close();
-      ev.stopImmediatePropagation();     // 别让 Esc 同时触发"打断"
+      ev.stopImmediatePropagation();
     }
   }, true);
   $("#cfg-save").addEventListener("click", () => SettingsPanel.save());
   $("#cfg-refresh").addEventListener("click", () => SettingsPanel.refresh());
-  $("#cfg-test").addEventListener("click", () => SettingsPanel.test());
   document.querySelectorAll(".cfg-tabs button").forEach((b) => {
     b.addEventListener("click", () => SettingsPanel.showTab(b.dataset.tab));
   });
-  // 顶部模式切换条：改了立刻切到对应页签，让"当前生效的是哪条"一眼可见
   document.querySelectorAll("#cfg-modebar button").forEach((b) => {
     b.addEventListener("click", () => {
       SettingsPanel.data.mode = b.dataset.mode;
       SettingsPanel.renderMode();
       SettingsPanel.showTab(b.dataset.mode === "full" ? "full" : "half");
-      SettingsPanel.setStatus("已切到" + (b.dataset.mode === "full" ? "全双工" : "半双工") + "，记得点保存");
+      SettingsPanel.setStatus("已切到" + (b.dataset.mode === "full" ? "全双工" : "半双工")
+                              + "，记得点保存");
     });
-  });
-  $("#cfg-llm-type").addEventListener("change", () => SettingsPanel.onLLMType());
-  $("#cfg-llm-preset").addEventListener("change", () => SettingsPanel.onLLMPreset());
-  $("#cfg-tts-provider").addEventListener("change", () => SettingsPanel.onTTSProvider());
-  $("#cfg-asr-provider").addEventListener("change", () => SettingsPanel.onASRProvider());
-  $("#cfg-full-provider").addEventListener("change", () => {
-    const f = SettingsPanel.data.full || {};
-    const p = (f.providers || []).find((x) => x.id === $("#cfg-full-provider").value) || {};
-    SettingsPanel.fillSelect($("#cfg-full-model"), p.models || [], (p.models || [])[0] || "");
   });
   $("#cfg-p-default").addEventListener("click", () => {
     $("#cfg-p-identity").value = (SettingsPanel.data.persona || {}).default_identity || "";

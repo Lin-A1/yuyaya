@@ -202,162 +202,194 @@ body.obs { background: transparent; }
 #settings {
   position: fixed; inset: 0; z-index: 40;
   display: grid; place-items: center;
-  background: rgba(4, 7, 6, .62); backdrop-filter: blur(3px);
+  background: rgba(4, 7, 6, .66); backdrop-filter: blur(4px);
 }
 #settings[hidden] { display: none; }
-.cfg-card {
-  width: min(600px, 94vw); max-height: 88vh; display: flex; flex-direction: column;
-  padding: 18px 20px 0; border-radius: 14px;
-  background: rgba(16, 21, 19, .97); border: 1px solid rgba(255, 255, 255, .16);
-  color: #e8ece9; font-size: 13px; line-height: 1.6;
-  box-shadow: 0 18px 60px rgba(0, 0, 0, .55);
-}
-.cfg-card header { display: flex; align-items: center; margin-bottom: 10px; }
-.cfg-card h3 { font-size: 15px; font-weight: 600; letter-spacing: .08em; flex: 1; }
-.cfg-close {
-  font: inherit; font-size: 20px; line-height: 1; padding: 2px 8px; cursor: pointer;
-  color: #c9d2ce; background: transparent; border: 0; border-radius: 6px;
-}
-.cfg-close:hover { background: rgba(255, 255, 255, .1); }
 
-/* 顶部模式切换条 */
+.cfg-card {
+  width: min(620px, 94vw); max-height: 88vh; display: flex; flex-direction: column;
+  padding: 0; border-radius: 16px; overflow: hidden;
+  background: #121614; border: 1px solid rgba(255, 255, 255, .1);
+  color: #e8ece9; font-size: 13px; line-height: 1.6;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, .6), 0 0 0 1px rgba(0, 0, 0, .4);
+}
+
+/* 头部：关闭 / 标题 / 模式切换 */
+.cfg-card header {
+  display: flex; align-items: center; gap: 12px;
+  padding: 14px 18px; border-bottom: 1px solid rgba(255, 255, 255, .07);
+  background: rgba(255, 255, 255, .02);
+}
+.cfg-card h3 { font-size: 14px; font-weight: 600; letter-spacing: .06em; }
+.cfg-close {
+  order: -1; font: inherit; font-size: 18px; line-height: 1; padding: 2px 6px;
+  cursor: pointer; color: #8b9994; background: transparent; border: 0; border-radius: 6px;
+}
+.cfg-close:hover { color: #e8ece9; background: rgba(255, 255, 255, .08); }
+
 .cfg-modebar {
-  display: flex; gap: 2px; margin-right: 12px;
+  margin-left: auto; display: flex; gap: 2px;
   background: rgba(255, 255, 255, .06); border-radius: 8px; padding: 3px;
 }
 .cfg-modebar button {
-  font: inherit; font-size: 12px; cursor: pointer; padding: 5px 13px;
-  color: #9fb0aa; background: transparent; border: 0; border-radius: 6px;
+  font: inherit; font-size: 12px; cursor: pointer; padding: 5px 14px;
+  color: #8b9994; background: transparent; border: 0; border-radius: 6px; transition: .15s;
 }
 .cfg-modebar button:hover { color: #d8e4df; }
-.cfg-modebar button.on {
-  color: #101513; background: #7fe1b2; font-weight: 600;
-}
-.cfg-lead--warn { color: #ffce7a; opacity: .95; }
-.cfg-lead--warn::before { content: ""; }
+.cfg-modebar button.on { color: #0d1411; background: #7fe1b2; font-weight: 600; }
 
 /* 页签 */
-.cfg-tabs { display: flex; gap: 4px; margin-bottom: 4px; border-bottom: 1px solid rgba(255, 255, 255, .12); }
+.cfg-tabs {
+  display: flex; gap: 2px; padding: 0 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, .07);
+}
 .cfg-tabs button {
-  font: inherit; font-size: 12.5px; cursor: pointer; padding: 8px 14px;
-  color: #9fb0aa; background: transparent; border: 0; border-bottom: 2px solid transparent;
-  border-radius: 6px 6px 0 0;
+  font: inherit; font-size: 12.5px; cursor: pointer; padding: 10px 14px;
+  color: #8b9994; background: transparent; border: 0;
+  border-bottom: 2px solid transparent; margin-bottom: -1px; transition: .15s;
 }
-.cfg-tabs button:hover { color: #d8e4df; background: rgba(255, 255, 255, .05); }
-.cfg-tabs button.on { color: #a8f0c6; border-bottom-color: #7fe1b2; background: rgba(127, 225, 178, .08); }
+.cfg-tabs button:hover { color: #d8e4df; }
+.cfg-tabs button.on { color: #a8f0c6; border-bottom-color: #7fe1b2; }
 
-.cfg-page { overflow-y: auto; padding: 14px 2px 12px; flex: 1; min-height: 190px; }
+/* 页面 */
+.cfg-page { overflow-y: auto; padding: 16px 18px; flex: 1; min-height: 200px; }
 .cfg-page[hidden] { display: none; }
-.cfg-lead { font-size: 12px; opacity: .66; margin-bottom: 14px; line-height: 1.7; }
-/* 单选卡片（模式 / agent 用几个） */
-.cfg-modes { display: grid; gap: 8px; margin: 4px 0 10px; }
-.cfg-modes--sm { grid-template-columns: 1fr 1fr; }
-.cfg-choice {
-  display: flex; flex-direction: column; gap: 2px; cursor: pointer;
-  padding: 10px 12px; border-radius: 9px;
-  background: rgba(255, 255, 255, .04); border: 1px solid rgba(255, 255, 255, .12);
-  transition: border-color .15s, background .15s;
-}
-.cfg-choice:hover { background: rgba(255, 255, 255, .07); }
-.cfg-choice.on { border-color: rgba(127, 225, 178, .75); background: rgba(127, 225, 178, .1); }
-.cfg-choice input { position: absolute; opacity: 0; pointer-events: none; }
-.cfg-choice b { font-weight: 600; font-size: 13px; }
-.cfg-choice.on b { color: #a8f0c6; }
-.cfg-choice small { opacity: .6; font-size: 11.5px; }
-
+.cfg-lead { font-size: 12px; opacity: .6; margin-bottom: 14px; line-height: 1.7; }
+.cfg-lead--warn { color: #ffce7a; opacity: .95; }
 .cfg-card h4 {
-  font-size: 11px; letter-spacing: .16em; opacity: .62; font-weight: 600;
-  margin: 16px 0 6px; padding-top: 12px; border-top: 1px solid rgba(255, 255, 255, .08);
+  display: flex; align-items: baseline; gap: 8px; margin: 0 0 10px;
+  font-size: 12px; font-weight: 600; letter-spacing: .1em; color: #a8f0c6;
 }
-.cfg-card h4:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
+.cfg-card h4 small { font-size: 11px; font-weight: 400; letter-spacing: 0; opacity: .45; }
 
-.cfg-row { display: flex; align-items: center; gap: 10px; margin: 7px 0; }
-.cfg-row[hidden] { display: none; }
-.cfg-row > span { width: 88px; flex: none; opacity: .8; }
-.cfg-row--sub { margin-left: 26px; }
-.cfg-row--sub > span { width: 62px; font-size: 12px; }
-.cfg-row select, .cfg-row input {
-  flex: 1; min-width: 0; font: inherit; font-size: 13px; color: #e8ece9;
-  background: rgba(255, 255, 255, .07); border: 1px solid rgba(255, 255, 255, .16);
-  border-radius: 7px; padding: 7px 9px; outline: none;
+/* 通道卡片 */
+.cfg-chan {
+  padding: 14px 15px; margin-bottom: 12px; border-radius: 12px;
+  background: rgba(255, 255, 255, .028); border: 1px solid rgba(255, 255, 255, .075);
 }
-.cfg-row select option { color: #16191a; background: #fff; }
-.cfg-row input:focus, .cfg-row select:focus { border-color: rgba(168, 240, 198, .6); }
-.cfg-note { display: block; font-size: 11px; opacity: .55; margin: 2px 0 0 98px; }
+.cfg-chan:last-child { margin-bottom: 0; }
 
-/* 开关 */
-.cfg-switch {
-  display: flex; align-items: center; gap: 10px; margin: 8px 0;
-  cursor: pointer; user-select: none;
+/* 字段：标签在上，控件在下（和截图那种表单一致） */
+.cfg-field { display: flex; flex-direction: column; gap: 5px; margin-bottom: 11px; }
+.cfg-field > span { font-size: 11.5px; color: #8b9994; letter-spacing: .02em; }
+.cfg-field--top { display: flex; flex-direction: column; }
+.cfg-field--sub { margin: 8px 0 0 26px; }
+.cfg-field select, .cfg-field input, .cfg-grid input {
+  width: 100%; font: inherit; font-size: 13px; color: #e8ece9;
+  background: rgba(255, 255, 255, .05); border: 1px solid rgba(255, 255, 255, .11);
+  border-radius: 8px; padding: 9px 11px; outline: none; transition: border-color .15s;
 }
-.cfg-switch input { width: 16px; height: 16px; accent-color: #7fe1b2; flex: none; }
-.cfg-switch > span { font-weight: 500; }
-.cfg-switch > small { opacity: .55; font-size: 11.5px; margin-left: auto; text-align: right; }
-.cfg-switch--sub { margin-left: 26px; margin-top: 14px; }
-.cfg-switch--sub > small { max-width: 62%; }
+.cfg-field select option { color: #16191a; background: #fff; }
+.cfg-field select:focus, .cfg-field input:focus, .cfg-grid input:focus {
+  border-color: rgba(127, 225, 178, .65); background: rgba(255, 255, 255, .07);
+}
+.cfg-policy { display: block; font-size: 11px; opacity: .42; margin-top: 6px; }
 
-/* CLI 卡片 */
-.cfg-cli {
-  margin: 10px 0; padding: 8px 12px 10px; border-radius: 9px;
-  background: rgba(255, 255, 255, .035); border: 1px solid rgba(255, 255, 255, .09);
+/* 模型列表 */
+.c-model-list { display: flex; flex-direction: column; gap: 5px; }
+.c-model {
+  display: flex; align-items: center; gap: 9px; padding: 8px 11px;
+  border-radius: 8px; background: rgba(255, 255, 255, .04);
+  border: 1px solid transparent; transition: .15s;
 }
-.cfg-cli.off { opacity: .5; }
-.cfg-cli .cfg-switch { margin: 0 0 4px; }
-.cfg-cli .cfg-switch > small { opacity: .5; font-size: 11px; }
+.c-model:hover { background: rgba(255, 255, 255, .06); }
+.c-model.on { border-color: rgba(127, 225, 178, .45); background: rgba(127, 225, 178, .08); }
+.c-model input[type="radio"] {
+  width: 13px; height: 13px; flex: none; margin: 0;
+  accent-color: #7fe1b2; cursor: pointer;
+}
+.c-model-name {
+  flex: 1; min-width: 0; font-size: 12.5px; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap;
+}
+.c-model .c-edit, .c-model .c-del {
+  flex: none; font: inherit; font-size: 12px; line-height: 1; cursor: pointer;
+  padding: 4px 6px; border-radius: 5px; border: 0;
+  color: #8b9994; background: transparent;
+}
+.c-model .c-edit:hover { color: #d8e4df; background: rgba(255, 255, 255, .1); }
+.c-model .c-del:hover { color: #ffb3b3; background: rgba(255, 110, 110, .15); }
+.c-model-empty { font-size: 11.5px; opacity: .4; padding: 6px 2px; }
+.c-model-add { display: flex; gap: 6px; margin-top: 7px; }
+.c-model-add input { flex: 1; min-width: 0; }
 
-.cfg-actions { display: flex; align-items: center; gap: 10px; margin: 10px 0 0 98px; }
-.cfg-actions small { font-size: 11px; opacity: .62; }
-
-/* 默认绿底只给"主操作"按钮；页签、模式条、关闭角标保持各自样式 */
-.cfg-card button:not(.cfg-close):not(.cfg-tabs button):not(.cfg-modebar button) {
-  font: inherit; font-size: 13px; cursor: pointer; color: #101513;
-  background: #7fe1b2; border: 0; border-radius: 7px; padding: 7px 14px;
-}
-.cfg-card button:hover:not(.cfg-close):not(.cfg-modebar button):not(.cfg-tabs button) { background: #93ecc2; }
-.cfg-card button:disabled { opacity: .45; cursor: default; }
-.cfg-card .cfg-test, .cfg-card #cfg-refresh {
-  background: rgba(168, 240, 198, .2); color: #d8f5e6;
-}
-.cfg-card .cfg-test:hover, .cfg-card #cfg-refresh:hover {
-  background: rgba(168, 240, 198, .32);
-}
-
-.cfg-key { display: flex; align-items: center; gap: 8px; margin: 10px 0; }
-.cfg-key > i {
-  width: 7px; height: 7px; flex: none; border-radius: 50%;
-  background: rgba(255, 255, 255, .28);
-}
-.cfg-key.ok > i { background: #7fe1b2; box-shadow: 0 0 6px rgba(127, 225, 178, .8); }
-.cfg-key > label { width: 178px; flex: none; }
-.cfg-key > label b { display: block; font-weight: 600; font-size: 12px; }
-.cfg-key > label small { display: block; font-size: 10.5px; opacity: .55; }
-.cfg-key > input {
-  flex: 1; min-width: 0; font: inherit; font-size: 13px; color: #e8ece9;
-  background: rgba(255, 255, 255, .07); border: 1px solid rgba(255, 255, 255, .16);
-  border-radius: 7px; padding: 7px 9px; outline: none;
-}
-.cfg-card .cfg-key .cfg-clear {
-  flex: none; font-size: 11.5px; padding: 5px 10px;
-  background: rgba(255, 120, 120, .16); color: #ffc9c9;
-}
-.cfg-card .cfg-key .cfg-clear:hover { background: rgba(255, 120, 120, .28); }
-
+/* 人设 */
+.cfg-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; margin-bottom: 11px; }
+.cfg-grid label { display: flex; flex-direction: column; gap: 5px; }
+.cfg-grid label > span, .cfg-block > span { font-size: 11.5px; color: #8b9994; }
+.cfg-block { display: flex; flex-direction: column; gap: 5px; margin-bottom: 11px; }
 .cfg-textarea {
   width: 100%; font: inherit; font-size: 12.5px; line-height: 1.7; color: #e8ece9;
-  background: rgba(255, 255, 255, .06); border: 1px solid rgba(255, 255, 255, .16);
-  border-radius: 8px; padding: 9px 11px; outline: none; resize: vertical;
+  background: rgba(255, 255, 255, .05); border: 1px solid rgba(255, 255, 255, .11);
+  border-radius: 8px; padding: 10px 11px; outline: none; resize: vertical;
 }
-.cfg-textarea:focus { border-color: rgba(168, 240, 198, .6); }
+.cfg-textarea:focus { border-color: rgba(127, 225, 178, .65); }
 .cfg-pre {
-  max-height: 130px; overflow-y: auto; white-space: pre-wrap; font-size: 11px;
-  line-height: 1.6; opacity: .55; background: rgba(255, 255, 255, .03);
-  border-radius: 7px; padding: 9px 11px; margin: 0;
+  max-height: 128px; overflow-y: auto; white-space: pre-wrap; font-size: 11px;
+  line-height: 1.6; opacity: .45; background: rgba(255, 255, 255, .03);
+  border-radius: 8px; padding: 10px 11px; margin: 0;
 }
-.cfg-actions--left { margin-left: 0; flex-wrap: wrap; }
 
-.cfg-card footer {
-  display: flex; align-items: center; gap: 10px; padding: 12px 0 14px;
-  border-top: 1px solid rgba(255, 255, 255, .1);
+/* Agent */
+.cfg-switch { display: flex; align-items: center; gap: 10px; margin: 9px 0; cursor: pointer; }
+.cfg-switch input { width: 15px; height: 15px; flex: none; accent-color: #7fe1b2; }
+.cfg-switch > span { font-weight: 500; }
+.cfg-switch > small { opacity: .5; font-size: 11.5px; margin-left: auto; text-align: right; }
+.cfg-switch--sub { margin-left: 24px; }
+.cfg-switch--sub > small { max-width: 60%; }
+
+.cfg-seg { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin: 8px 0 10px; }
+.cfg-seg-item {
+  display: flex; flex-direction: column; gap: 1px; cursor: pointer;
+  padding: 9px 11px; border-radius: 9px;
+  background: rgba(255, 255, 255, .035); border: 1px solid rgba(255, 255, 255, .09);
+  transition: .15s;
 }
-.cfg-card footer small { flex: 1; font-size: 11px; opacity: .62; }
+.cfg-seg-item:hover { background: rgba(255, 255, 255, .06); }
+.cfg-seg-item.on { border-color: rgba(127, 225, 178, .6); background: rgba(127, 225, 178, .1); }
+.cfg-seg-item input { position: absolute; opacity: 0; pointer-events: none; }
+.cfg-seg-item b { font-size: 12.5px; font-weight: 600; }
+.cfg-seg-item.on b { color: #a8f0c6; }
+.cfg-seg-item small { font-size: 11px; opacity: .5; }
+
+.cfg-cli {
+  margin: 9px 0; padding: 10px 13px; border-radius: 10px;
+  background: rgba(255, 255, 255, .03); border: 1px solid rgba(255, 255, 255, .07);
+}
+.cfg-cli.off { opacity: .45; }
+.cfg-cli .cfg-switch { margin: 0; }
+
+.cfg-row { display: flex; align-items: center; gap: 10px; margin: 8px 0; }
+.cfg-row[hidden] { display: none; }
+.cfg-row > span { width: 70px; flex: none; font-size: 11.5px; color: #8b9994; }
+.cfg-row select {
+  flex: 1; min-width: 0; font: inherit; font-size: 13px; color: #e8ece9;
+  background: rgba(255, 255, 255, .05); border: 1px solid rgba(255, 255, 255, .11);
+  border-radius: 8px; padding: 8px 10px; outline: none;
+}
+.cfg-row select option { color: #16191a; background: #fff; }
+
+/* 按钮 */
+.cfg-actions { display: flex; align-items: center; gap: 8px; margin: 2px 0 12px; flex-wrap: wrap; }
+.cfg-actions small { font-size: 11px; opacity: .55; }
+.cfg-card button.cfg-primary {
+  font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; color: #0d1411;
+  background: #7fe1b2; border: 0; border-radius: 8px; padding: 8px 18px;
+}
+.cfg-card button.cfg-primary:hover { background: #93ecc2; }
+.cfg-card button.cfg-ghost {
+  font: inherit; font-size: 12.5px; cursor: pointer; color: #cfdad5;
+  background: rgba(255, 255, 255, .07); border: 1px solid rgba(255, 255, 255, .1);
+  border-radius: 8px; padding: 7px 13px;
+}
+.cfg-card button.cfg-ghost:hover { background: rgba(255, 255, 255, .12); color: #fff; }
+.cfg-card button:disabled { opacity: .4; cursor: default; }
+
+/* 底部 */
+.cfg-card footer {
+  display: flex; align-items: center; gap: 9px; padding: 12px 18px;
+  border-top: 1px solid rgba(255, 255, 255, .07); background: rgba(255, 255, 255, .02);
+}
+.cfg-card footer small { flex: 1; font-size: 11px; opacity: .55; }
+
 body.obs #settings { display: none; }

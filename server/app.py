@@ -66,9 +66,14 @@ def load_config() -> dict:
     return conf
 
 
-def runtime_conf(conf: dict) -> dict:
+def channel_keys(settings) -> dict:
+    """{通道: key}，从 state/secrets.json 读（老的环境变量兜底）。"""
+    return {ch: settings.key_for(ch) for ch in ("llm", "tts", "asr", "full")}
+
+
+def runtime_conf(conf: dict, settings=None) -> dict:
     """把三层配置摊平成各模块直接可用的字典。"""
-    return configure.resolve(conf)
+    return configure.resolve(conf, channel_keys(settings) if settings else None)
 
 
 # 兼容旧代码：server.app.Hub 就是 EventBus
@@ -283,7 +288,7 @@ def create_app() -> FastAPI:
     state_path = pathlib.Path(os.environ.get("YUYAYA_STATE", ROOT / "state" / "memory.json"))
     settings = Settings(conf, config_path(), state_path.parent)
     # conf 是三层结构（页面编辑的就是它）；rt 是摊平后各模块直接用的形状
-    rt = configure.compat(configure.resolve(conf))
+    rt = configure.compat(configure.resolve(conf, channel_keys(settings)))
     bus = EventBus()
     hub = bus                      # 兼容旧的端点写法
     turns = TurnManager(bus)
@@ -318,7 +323,7 @@ def create_app() -> FastAPI:
     def apply_config(changed_keys: dict) -> list[str]:
         """把刚保存的配置推到运行中的对象上，能不改就不重启。"""
         applied: list[str] = []
-        new_rt = configure.compat(configure.resolve(conf))
+        new_rt = configure.compat(configure.resolve(conf, channel_keys(settings)))
         settings.conf = conf
         rt["mode"] = new_rt.get("mode")
         rt["llm"] = new_rt.get("_capabilities", {}).get("llm") or {}
@@ -579,8 +584,9 @@ def create_app() -> FastAPI:
         """前端判断"现在用哪条链路"的依据。"""
         p = tts_provider()
         tts_info = p.info()
-        asr = configure.resolve(conf)["asr"]
-        asr_ok = asr["enabled"] and (not asr["key_env"] or bool(os.environ.get(asr["key_env"])))
+        asr = configure.resolve(conf, channel_keys(settings))["asr"]
+        asr_ok = asr["enabled"] and bool(asr.get("api_key") or not asr["key_env"]
+                                         or os.environ.get(asr["key_env"]))
         return {
             "tts": {
                 "enabled": bool(tts_conf.get("enabled", True)) and p.available(),
@@ -595,7 +601,7 @@ def create_app() -> FastAPI:
                     ("没有选语音识别" if not asr["enabled"]
                      else f"需要设置环境变量 {asr['key_env']}")},
             "realtime": realtime.info(),
-            "mode": configure.resolve(conf)["mode"],
+            "mode": configure.resolve(conf, channel_keys(settings))["mode"],
             "half": {"llm": (rt.get("llm") or {}).get("label") or "",
                      "model": (rt.get("llm") or {}).get("model") or ""},
         }
@@ -711,7 +717,7 @@ def create_app() -> FastAPI:
         ``speech_final`` 交给同一个统一入口，和浏览器自带识别的路径完全一致。
         """
         require_local_control(request)
-        asr = configure.resolve(conf)["asr"]
+        asr = configure.resolve(conf, channel_keys(settings))["asr"]
         if not asr["enabled"]:
             raise HTTPException(400, "没有启用语音识别")
         audio = await request.body()
@@ -722,7 +728,7 @@ def create_app() -> FastAPI:
         try:
             text = await asyncio.to_thread(
                 asr_transcribe, audio, asr["provider"], asr["model"], asr["key_env"],
-                asr.get("base_url", ""))
+                asr.get("base_url", ""), 60, asr.get("api_key", ""))
         except asr_error as e:
             raise HTTPException(503, str(e))
         text = (text or "").strip()
