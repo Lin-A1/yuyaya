@@ -423,7 +423,12 @@ class Renderer {
     this.canvas = canvas;
     this.rig = rig;
     this.tex = {};
-    const gl = (this.gl = canvas.getContext("webgl2", { premultipliedAlpha: true, antialias: true }));
+    // preserveDrawingBuffer：让画布内容在"没有下一帧"时也留着。
+    // 正常浏览器里每帧都重画，不开也没事；但截图/录屏（tools/make_promo.py）
+    // 是一帧一帧手动驱动的，不开的话截图会拿到空画布。
+    const gl = (this.gl = canvas.getContext("webgl2", {
+      premultipliedAlpha: true, antialias: true, preserveDrawingBuffer: true,
+    }));
     if (!gl) throw new Error("浏览器不支持 WebGL2");
     const prog = (this.prog = gl.createProgram());
     for (const [type, src] of [[gl.VERTEX_SHADER, VS], [gl.FRAGMENT_SHADER, FS]]) {

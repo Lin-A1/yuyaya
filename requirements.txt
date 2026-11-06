@@ -6,6 +6,7 @@ aiohttp>=3.9
 # edge-tts>=7.0
 # 可选：使用 Claude API 大脑时需要
 # anthropic
-# 可选：重新生成 / 加工素材时需要
+# 可选：录制宣传片（tools/make_promo.py，自带 ffmpeg 二进制）
+# imageio-ffmpeg
 # pillow>=10
 # numpy
