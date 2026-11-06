@@ -57,6 +57,7 @@ class _Bridge:
         self.user_turn_has_task = False     # 这一轮有没有真的调用过 do_task
         self.nudged_turn = None             # 已经提醒过的用户话，避免反复催
         self.last_activity = 0.0
+        self.echo_guard_until = 0.0     # 回答结束后再屏蔽一小段麦克风，躲开扬声器尾音
         self.loop = asyncio.get_running_loop()
 
     # ---------- 浏览器 -> 模型 ----------
@@ -68,6 +69,11 @@ class _Bridge:
                 return
             data = msg.get("bytes")
             if data:
+                # 她正在说话时丢掉麦克风音频：扬声器的声音会被麦克风收回去，
+                # 浏览器那点回声消除不够用，模型会把自己的话当成用户在说，
+                # 于是自己跟自己聊起来（"一直在自言自语"）。
+                if self.response_active or self.echo_guard_until > time.time():
+                    continue
                 await self.up.send_json({
                     "type": "input_audio_buffer.append",
                     "audio": base64.b64encode(data).decode("ascii"),
@@ -236,6 +242,8 @@ class _Bridge:
 
         if etype == "response.done":
             self.response_active = False
+            # 回答播完后音频还在扬声器里走，再挡一小段，别把尾音收进来
+            self.echo_guard_until = time.time() + float(rt.conf.get("echo_guard_sec", 1.2))
             await self._safe_send({"type": "caption_end"})
             await self._flush_tools()      # 工具结果要等这一轮结束再交回去
             self._finish_turn()

@@ -40,6 +40,8 @@ class RealtimeVoice {
     this.mouthTimer = null;
     this.endTimer = null;
     this.caption = "";
+    this.speaking = false;        // 模型正在回答：暂停上传麦克风，避免把自己说的话收回去
+    this.echoGuardUntil = 0;      // 回答结束后再静音一小段，躲开扬声器尾音
     this.captionTimer = null;
     this.active = false;
     this.onClose = null;      // 服务端主动断开时通知界面复位
@@ -96,6 +98,9 @@ class RealtimeVoice {
     mute.connect(this.ctx.destination);
     node.onaudioprocess = (e) => {
       if (!this.active || !this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+      // 她在说话（或刚说完的尾音期）就不上传：扬声器的声音会被麦克风收回去，
+      // 模型把自己的话当成用户输入，就会一直自言自语。
+      if (this.speaking || performance.now() < this.echoGuardUntil) return;
       const pcm = _downsampleTo16k(e.inputBuffer.getChannelData(0), this.ctx.sampleRate);
       if (pcm.length) this.ws.send(pcm.buffer);
     };
@@ -110,6 +115,7 @@ class RealtimeVoice {
       if (type === "ready") {
         if (this._ready) { this._ready(); this._ready = null; this._fail = null; }
       } else if (type === "speech_started") {
+        this.speaking = false;                  // 用户开口 = 她不再说话
         this.flush();                           // 一开口就停掉正在放的模型音频
         this.avatar.setState("listening");
       } else if (type === "caption") {
@@ -117,9 +123,14 @@ class RealtimeVoice {
         this.caption = m.text || "";
         this._paintCaption();
       } else if (type === "caption_clear") {
+        this.speaking = true;                   // 新回答开始，麦克风先让开
         this.caption = "";
         this._paintCaption();
       } else if (type === "caption_end") {
+        // 回答结束：等扬声器里排队的音频放完再恢复麦克风
+        const left0 = this.ctx ? Math.max(0, this.nextAt - this.ctx.currentTime) : 0;
+        this.speaking = false;
+        this.echoGuardUntil = performance.now() + left0 * 1000 + 800;
         clearTimeout(this.captionTimer);
         // 等已经排进 AudioContext 的音频播完，再把最后一句话收掉
         const left = this.ctx ? Math.max(0, this.nextAt - this.ctx.currentTime) : 0;
