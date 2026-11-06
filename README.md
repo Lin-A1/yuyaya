@@ -136,7 +136,10 @@ cp config.example.json config.json   # 可选：不复制也能跑，页面里�
 厂商 → API 格式（LLM 才有）→ Base URL → API Key → 模型列表
 ```
 
-- **模型列表**可以增删改，单选一个作为当前模型；换厂商时 base_url 和模型表自动换成该厂商的默认值。
+- **模型列表**：填好 Base URL + Key 后**直接问服务商要真实列表**（OpenAI 兼容的 `GET /models`，
+  通义能拉到 180+ 个），超过 12 个时带搜索框；也能手动增删改、单选一个作为当前模型。
+- **音色跟着模型走**：同一个厂商的不同模型音色表不一样——比如 `qwen-audio-3.1-realtime-flash`
+  是实时那套 28 个预置音色，`qwen3-tts-flash` 是它自己的 19 个（Cherry / Ethan / Serena…）。
 - **API Key 填在各自的通道里**，没有再单独的"密钥"页。key 按通道存进 `state/secrets.json`
   （不入库），接口只回显掩码（`sk-…abcd`）；留空表示不改。
 - **API 格式**决定走哪种线协议：
@@ -510,8 +513,13 @@ curl -XPOST localhost:8848/api/initiative/notify -H "Content-Type: application/j
 
 ## 语音对话
 
-- **TTS**：未启用全双工时，前端调用 `/api/tts`。引擎在设置里选（`voice.half.tts.provider`）：`qwen-realtime` 用 Qwen-Audio-Realtime 按文本合成、和语音对话同音色；`edge` 是微软在线音色、免 key；`sapi` 是本机离线语音。`ServerVoice` 通过 WebAudio `AnalyserNode` 取真实响度驱动口型，失败时回退浏览器语音。`?tts=off` 关闭，`?tts=browser` 强制浏览器语音。
-- **换音色**：在设置里选。`qwen-realtime` 和全双工共用同一套 28 个预置音色（试听页 http://127.0.0.1:8848/voice-samples/index.html）；`edge` 用 Edge 的音色名（晓伊、晓晓…）；`sapi` 用系统装的语音。换引擎时音色会自动切到该引擎的表里。
+- **TTS**：未启用全双工时，前端调用 `/api/tts`。引擎在设置里选：
+  `qwen-tts`（`qwen3-tts-flash`，千问语音合成，音色 Cherry/Ethan/Serena…）、
+  `qwen-realtime`（和全双工同一套 28 个预置音色）、`edge`（微软在线，免 key）、
+  `openai`（`/audio/speech` 形态）、`sapi`（本机离线）。
+  `ServerVoice` 通过 WebAudio `AnalyserNode` 取真实响度驱动口型，失败时回退浏览器语音。
+- **换音色**：音色是**跟着模型**的，换模型就换一套。`qwen-realtime` 那 28 个可以在
+  http://127.0.0.1:8848/voice-samples/index.html 试听。
 - **连续语音输入（半双工）**：控制台"语音"按钮按 `voice.half.asr` 决定走哪条：
   - `qwen`（默认）：浏览器录音 → `POST /api/asr` → 服务端用 `qwen3-asr-flash` 转写。**不依赖浏览器自带的 SpeechRecognition**，Chrome 之外的浏览器也能用。内置简易 VAD，说完一句自动切句上传。
   - `none`：按钮禁用，只能打字。

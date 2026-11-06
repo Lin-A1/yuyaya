@@ -299,7 +299,11 @@ body.obs { background: transparent; }
 .cfg-policy { display: block; font-size: 11px; opacity: .42; margin-top: 6px; }
 
 /* 模型列表 */
-.c-model-list { display: flex; flex-direction: column; gap: 5px; }
+.c-model-list {
+  display: flex; flex-direction: column; gap: 5px;
+  max-height: 220px; overflow-y: auto; padding-right: 4px;
+}
+.c-filter { margin-bottom: 6px !important; }
 .c-model {
   display: flex; align-items: center; gap: 9px; padding: 8px 11px;
   border-radius: 8px; background: rgba(255, 255, 255, .04);

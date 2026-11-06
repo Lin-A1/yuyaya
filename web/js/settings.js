@@ -85,10 +85,11 @@ const SettingsPanel = {
                  placeholder="${c.has_key ? "已设置 " + c.key_hint + "，留空不改" : "未设置"}">
         </label>` : ""}
         <div class="cfg-field cfg-field--top c-models" ${isDemo ? "hidden" : ""}>
-          <span>模型列表</span>
+          <span>模型列表${models.length > 12 ? `（共 ${models.length} 个，可搜索）` : ""}</span>
+          ${models.length > 12 ? `<input class="c-filter" placeholder="搜模型名…">` : ""}
           <div class="c-model-list">
             ${models.map((m) => this.modelRow(m, c.model)).join("")
-              || '<div class="c-model-empty">还没有模型，点右上角添加</div>'}
+              || '<div class="c-model-empty">还没有模型，点下面添加，或先填好 Base URL + Key 让它自动拉</div>'}
           </div>
           <div class="c-model-add">
             <input class="c-new-model" placeholder="输入模型名，回车添加">
@@ -133,10 +134,12 @@ const SettingsPanel = {
     mount.querySelectorAll(".c-model").forEach((row) => {
       const id = row.dataset.id;
       const pick = row.querySelector('input[type="radio"]');
-      pick.addEventListener("change", () => {
+      pick.addEventListener("change", async () => {
         c.model = id;
         mount.querySelectorAll(".c-model").forEach((r) =>
           r.classList.toggle("on", r.dataset.id === id));
+        // 音色跟着模型走：换模型后要重新问服务端这个模型的音色表
+        if (name === "tts") await this.refreshVoices(name, mount, title, hint);
       });
       const rename = row.querySelector(".c-edit");
       rename.addEventListener("click", () => {
@@ -155,6 +158,15 @@ const SettingsPanel = {
         this.renderChannel(name, mount, title, hint);
       });
     });
+    const box = mount.querySelector(".c-filter");
+    if (box) {
+      box.addEventListener("input", () => {
+        const q = box.value.trim().toLowerCase();
+        mount.querySelectorAll(".c-model").forEach((r) => {
+          r.style.display = !q || r.dataset.id.toLowerCase().includes(q) ? "" : "none";
+        });
+      });
+    }
     const add = () => {
       const input = mount.querySelector(".c-new-model");
       const val = (input.value || "").trim();
@@ -169,6 +181,19 @@ const SettingsPanel = {
     mount.querySelector(".c-new-model").addEventListener("keydown", (ev) => {
       if (ev.key === "Enter") { ev.preventDefault(); add(); }
     });
+  },
+
+  /** 换模型后重新取该模型的音色表（音色写在模型上，不是厂商上） */
+  async refreshVoices(name, mount, title, hint) {
+    const c = this.edit(name);
+    try {
+      const d = await api("/api/settings");
+      const fresh = d[name] || {};
+      c.voices = fresh.voices || [];
+      c.voice = fresh.voice || (c.voices[0] && c.voices[0].id) || "";
+      this.chan[name] = c;
+      this.renderChannel(name, mount, title, hint);
+    } catch (_) { /* 取不到就保持原样 */ }
   },
 
   modelRow(m, current) {

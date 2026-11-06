@@ -19,6 +19,8 @@ import subprocess
 import threading
 import time
 
+import requests
+
 CACHE_TTL = 300.0          # 模型列表缓存时间（秒）
 _cache: dict = {}
 _lock = threading.Lock()
@@ -98,6 +100,29 @@ SAPI_VOICES = [
     ("Microsoft Yaoyao", "瑶瑶 · 中文女声（装了语言包才有）"),
     ("Microsoft Zira Desktop", "Zira · 英文女声"),
     ("Microsoft David Desktop", "David · 男声"),
+]
+
+# qwen3-tts 系列自己的音色（和实时语音的 28 个不是一套，实测可用）
+QWEN3_TTS_VOICES = [
+    ("Cherry", "Cherry · 女声，亲和"),
+    ("Serena", "Serena · 女声，温柔"),
+    ("Ethan", "Ethan · 男声，阳光"),
+    ("Chelsie", "Chelsie · 女声，活泼"),
+    ("Dylan", "Dylan · 男声，年轻"),
+    ("Jada", "Jada · 女声，成熟"),
+    ("Sunny", "Sunny · 女声，明亮"),
+    ("Nofish", "Nofish · 女声，清亮"),
+    ("Kiki", "Kiki · 女声，甜"),
+    ("Elias", "Elias · 男声，沉稳"),
+    ("Jennifer", "Jennifer · 女声，播音"),
+    ("Ryan", "Ryan · 男声，有力"),
+    ("Katerina", "Katerina · 女声，低沉"),
+    ("Li", "Li · 男声，中文"),
+    ("Marcus", "Marcus · 男声，沉稳"),
+    ("Roy", "Roy · 男声，磁性"),
+    ("Peter", "Peter · 男声，厚重"),
+    ("Rocky", "Rocky · 男声，粗犷"),
+    ("Eric", "Eric · 男声"),
 ]
 
 OPENAI_TTS_VOICES = [
@@ -226,23 +251,36 @@ LLM_PRESETS = [
 TTS_PROVIDERS = [
     {
         "id": "qwen-realtime", "label": "Qwen 实时音色", "key_env": "DASHSCOPE_API_KEY",
+        "models": [{"id": "qwen-audio-3.1-realtime-flash", "label": "qwen-audio-3.1-realtime-flash"}],
+        "voices_by_model": {"*": QWEN_VOICES},
         "voices": QWEN_VOICES,
-        "note": "用实时模型朗读，和全双工语音是同一个声音。",
+        "note": "用实时模型朗读，和全双工语音是同一套 28 个音色。",
+    },
+    {
+        "id": "qwen-tts", "label": "Qwen TTS（qwen3-tts-flash）",
+        "key_env": "DASHSCOPE_API_KEY",
+        "api": "dashscope-tts",
+        "models": [{"id": "qwen3-tts-flash", "label": "qwen3-tts-flash"}],
+        "voices_by_model": {"qwen3-tts-flash": QWEN3_TTS_VOICES, "*": QWEN3_TTS_VOICES},
+        "voices": QWEN3_TTS_VOICES,
+        "note": "千问语音合成模型，音色和实时语音那套不同（Cherry/Ethan/Serena…）。",
     },
     {
         "id": "edge", "label": "Edge 在线语音", "key_env": "",
-        "voices": EDGE_VOICES,
-        "note": "微软 Edge 的在线音色，免 key，音色多。",
+        "models": [], "voices": EDGE_VOICES,
+        "note": "微软 Edge 的在线音色，免 key。",
     },
     {
         "id": "openai", "label": "OpenAI 兼容 /audio/speech", "key_env": "OPENAI_API_KEY",
+        "models": [{"id": "tts-1", "label": "tts-1"}, {"id": "tts-1-hd", "label": "tts-1-hd"}],
+        "voices_by_model": {"*": OPENAI_TTS_VOICES},
         "voices": OPENAI_TTS_VOICES,
         "base_url_field": True,
-        "note": "OpenAI、硅基流动、Groq、自建 one-api 等只要是这个接口形态都能用，填 base_url 即可。",
+        "note": "OpenAI、Groq、硅基流动、自建 one-api 等只要是这个接口形态都能用。",
     },
     {
         "id": "sapi", "label": "Windows 本机语音", "key_env": "",
-        "voices": SAPI_VOICES,
+        "models": [], "voices": SAPI_VOICES,
         "note": "离线可用，但中文只有慧慧，比较机械。",
     },
 ]
@@ -294,6 +332,35 @@ def provider(kind: str, pid: str) -> dict:
 def voices_for(tts_provider: str) -> list[dict]:
     p = provider("tts", tts_provider)
     return [{"id": i, "label": l} for i, l in p.get("voices") or QWEN_VOICES]
+
+
+def fetch_models(base_url: str, api_key: str, timeout: float = 15) -> list[dict]:
+    """从服务商实时拉模型列表（OpenAI 兼容的 GET /models）。
+
+    拉不到就返回空列表，页面会退回"手动输入模型名"，不影响使用。
+    """
+    if not base_url:
+        return []
+    url = base_url.rstrip("/") + "/models"
+    try:
+        headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+        r = requests.get(url, headers=headers, timeout=timeout)
+        if r.status_code != 200:
+            return []
+        data = r.json()
+    except (requests.RequestException, ValueError):
+        return []
+    items = data.get("data") if isinstance(data, dict) else data
+    if not isinstance(items, list):
+        return []
+    out = []
+    for m in items:
+        mid = (m.get("id") if isinstance(m, dict) else str(m)) or ""
+        if not mid:
+            continue
+        out.append({"id": mid, "label": mid})
+    out.sort(key=lambda x: x["id"])
+    return out
 
 
 def voice_ids(tts_provider: str) -> set:

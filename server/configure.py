@@ -331,11 +331,17 @@ _DEFAULT_KEY_ENV = {"messages": "ANTHROPIC_API_KEY", "generateContent": "GEMINI_
 def _tts_config(sel: dict, key: str = "") -> dict:
     row = _vendor_row(sel, catalog.TTS_PROVIDERS)
     pid = sel.get("vendor") or sel.get("provider") or row.get("id") or "qwen-realtime"
-    voices = [i for i, _ in (row.get("voices") or [])]
+    decl = [m["id"] if isinstance(m, dict) else m for m in (row.get("models") or [])]
+    model = sel.get("model") or (decl[0] if decl else "")
+    # 音色跟着模型走：同一个厂商的不同模型音色表不一样
+    by_model = row.get("voices_by_model") or {}
+    table = by_model.get(model) or by_model.get("*") or row.get("voices") or []
+    voices = [i for i, _ in table]
     voice = sel.get("voice") or (voices[0] if voices else "")
     return {"enabled": sel.get("enabled", True) is not False, "provider": pid,
-            "label": row.get("label", pid), "voice": voice,
-            "api_key": key, "key_env": row.get("key_env", ""),
+            "label": row.get("label", pid), "model": model, "voice": voice,
+            "api_key": key, "api_key_env": row.get("key_env", ""),
+            "key_env": row.get("key_env", ""),
             "base_url": sel.get("base_url") or "",
             "rate": int(sel.get("rate", 0)), "volume": int(sel.get("volume", 100))}
 

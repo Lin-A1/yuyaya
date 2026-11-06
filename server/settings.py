@@ -156,6 +156,21 @@ class Settings:
         if not model and models:
             model = models[0]["id"]
         key = self.key_for(name)
+        base_url = (sel.get("base_url") or row.get("base_url") or "").strip()
+        # 能连上就问服务商要真实模型列表；拉不到就用配置里已有的。
+        # TTS/ASR 不走 /models（它们用的不是 chat 接口），模型由厂商表声明。
+        if name == "llm" and base_url and key and row.get("list_models", True):
+            live = catalog.fetch_models(base_url, key)
+            if live:
+                ids = {m["id"] for m in live}
+                if model in ids:
+                    live.remove(next(m for m in live if m["id"] == model))
+                    live.insert(0, {"id": model, "label": model})
+                elif model:
+                    live.insert(0, {"id": model, "label": model})
+                models = live
+                if not model:
+                    model = models[0]["id"]
         info = {
             "vendor": vendor or (presets[0]["id"] if presets else ""),
             "vendors": [{"id": p["id"], "label": p["label"], "note": p.get("note", ""),
@@ -174,7 +189,8 @@ class Settings:
             info["ready"] = bool(self.conf.get("mode") == "full" and bool(key)
                                  and info["model"])
         elif name == "tts":
-            info["voices"] = _voices_for(sel, row)
+            # 音色跟着**模型**走：同一个厂商的不同模型（实时朗读 / qwen3-tts）音色表完全不同
+            info["voices"] = _voices_for(model, row)
             info["voice"] = sel.get("voice") or (info["voices"][0]["id"]
                                                  if info["voices"] else "")
         if types is not None:
@@ -312,8 +328,8 @@ class Settings:
             changed[f"{name}.key"] = "已设置" if self.secrets.get(name) else "已清除"
 
 
-def _voices_for(sel: dict, row: dict) -> list[dict]:
-    """TTS 音色表：厂商自带就用它的，否则用当前 base_url 对应的通用表。"""
-    if row.get("voices"):
-        return [{"id": i, "label": l} for i, l in row["voices"]]
-    return []
+def _voices_for(model: str, row: dict) -> list[dict]:
+    """TTS 音色表：按**模型**取，取不到才退回该厂商的通用表。"""
+    by_model = row.get("voices_by_model") or {}
+    table = by_model.get(model) or by_model.get("*") or row.get("voices") or []
+    return [{"id": i, "label": l} for i, l in table]

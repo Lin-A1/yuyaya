@@ -54,7 +54,8 @@ $s.Dispose()
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         subprocess.run(
             ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
-            env=env, check=True, capture_output=True, timeout=30,
+            env=env, check=True, capture_output=True,
+            timeout=float(os.environ.get("YUYAYA_SAPI_TIMEOUT", 90)),
             creationflags=flags,
         )
         data = out.read_bytes()

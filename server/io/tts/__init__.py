@@ -10,6 +10,7 @@ import logging
 from .edge import EdgeTTSProvider
 from .openai_tts import OpenAITTSProvider
 from .qwen_realtime import QwenRealtimeTTSProvider
+from .qwen_tts import QwenTTSProvider
 from .sapi import SapiTTSProvider
 
 log = logging.getLogger("yuyaya.io")
@@ -18,6 +19,7 @@ PROVIDERS = {
     "sapi": SapiTTSProvider,
     "edge": EdgeTTSProvider,
     "qwen-realtime": QwenRealtimeTTSProvider,
+    "qwen-tts": QwenTTSProvider,
     "openai": OpenAITTSProvider,
 }
 
@@ -40,4 +42,4 @@ def build(conf: dict | None):
 
 
 __all__ = ["PROVIDERS", "build", "SapiTTSProvider", "EdgeTTSProvider",
-           "QwenRealtimeTTSProvider", "OpenAITTSProvider"]
+           "QwenRealtimeTTSProvider", "QwenTTSProvider", "OpenAITTSProvider"]
